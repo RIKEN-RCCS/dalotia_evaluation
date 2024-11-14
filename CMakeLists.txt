@@ -17,19 +17,21 @@ set(CMAKE_MAKE_PROGRAM "make")
 message(STATUS "CMAKE BUILD TYPE: ${CMAKE_BUILD_TYPE}")
 
 include(FetchContent)
-  FetchContent_Declare(
-    dalotia
-    GIT_REPOSITORY git@github.com:RIKEN-RCCS/dalotia.git #TODO replace w/ https
-    GIT_TAG main # TODO replace with release tag
-    # CMAKE_ARGS  # I believe these are ignored, set like below
-    #       -D DALOTIA_BUILD_TESTS=ON
-    FIND_PACKAGE_ARGS
-  )
-  set(DALOTIA_BUILD_TESTS OFF)
-  FetchContent_MakeAvailable(dalotia)
-  FetchContent_GetProperties(dalotia SOURCE_DIR DALOTIA_CPP_INCLUDE_DIR BINARY_DIR DALOTIA_CPP_LIBRARY)
-  message(status "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
-  message(status "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
+FetchContent_Declare(
+  dalotia
+  GIT_REPOSITORY git@github.com:RIKEN-RCCS/dalotia.git #TODO replace w/ https
+  GIT_TAG main # TODO replace with release tag
+  # CMAKE_ARGS  # I believe these are ignored, set like below
+  #       -D DALOTIA_BUILD_TESTS=ON
+  FIND_PACKAGE_ARGS
+)
+set(DALOTIA_BUILD_TESTS OFF)
+FetchContent_MakeAvailable(dalotia)
+FetchContent_GetProperties(dalotia SOURCE_DIR DALOTIA_CPP_INCLUDE_DIR BINARY_DIR DALOTIA_CPP_LIBRARY)
+message(STATUS "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
+message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
+
+find_package(BLAS REQUIRED BLA_STATIC)
 
 if (DALOTIA_E_WITH_NDIRECT)
   include(ExternalProject)
@@ -59,21 +61,9 @@ if (DALOTIA_E_WITH_BOOST_MULTI)
   )
   FetchContent_MakeAvailable(multi)
   FetchContent_GetProperties(multi SOURCE_DIR MULTI_CPP_INCLUDE_DIR BINARY_DIR MULTI_CPP_LIBRARY)
-  target_include_directories(dalotia_cpp PUBLIC ${MULTI_CPP_INCLUDE_DIR} ${MULTI_DIR})
-  target_link_libraries(dalotia_cpp multi)
-
-  # download the mnist test data
-  # function(download_and_extract url dest) #TODO?
-  FetchContent_Declare(data_mnist_test
-    URL https://ossci-datasets.s3.amazonaws.com/mnist/t10k-labels-idx1-ubyte.gz
-    URL_HASH SHA256=f7ae60f92e00ec6debd23a6088c31dbd2371eca3ffa0defaefb259924204aec6
-    DOWNLOAD_NO_EXTRACT true
-  )
-  if(NOT data_mnist_test_POPULATED)
-    FetchContent_Populate(data_mnist_test)
-  endif()
-  file(ARCHIVE_EXTRACT INPUT ${data_mnist_test_SOURCE_DIR}/t10k-labels-idx1-ubyte.gz DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/mnist/data)
-
+  # target_include_directories(dalotia_cpp PUBLIC ${MULTI_CPP_INCLUDE_DIR} ${MULTI_DIR})
+  # target_link_libraries(dalotia_cpp multi)
+  target_link_libraries(multi ${BLAS_LIBRARIES})
 endif (DALOTIA_E_WITH_BOOST_MULTI)
 
 find_package(OpenMP) #TODO if this should not be always on, parameterize in dalotia as well
@@ -81,7 +71,6 @@ if (OpenMP_CXX_FOUND)
   target_link_libraries(dalotia_cpp OpenMP::OpenMP_CXX)
 endif ()
 
-find_package(BLAS REQUIRED BLA_STATIC)
 
 add_subdirectory(benchmarks)
 

@@ -114,7 +114,7 @@ std::ostream &operator<<(
     return os;
 }
 
-void run_inference(std::string filename) {
+void run_inference_boost_multi(std::string filename) {
     using span_4d_float = multi::array_ref<float, 4>;
     using span_3d_float = multi::array_ref<float, 3>;
     using span_2d_float = multi::array_ref<float, 2>;
@@ -135,15 +135,11 @@ void run_inference(std::string filename) {
     const auto fc1_weight_span = span_2d_float({10, 784}, fc1_weight.data());
     const auto fc1_bias_span = span_2d_float({10, 1}, fc1_bias.data());
 
-    return;  // early return for CI, to avoid data handling ;)
-
     // load the mnist test data // as in
     // https://medium.com/@myringoleMLGOD/simple-convolutional-neural-network-cnn-for-dummies-in-pytorch-a-step-by-step-guide-6f4109f6df80
     // too
-    std::string mnist_test_images_filename =
-        "../../python-fiddling/dataset/MNIST/raw/t10k-images-idx3-ubyte";
-    std::string mnist_test_labels_filename =
-        "../../python-fiddling/dataset/MNIST/raw/t10k-labels-idx3-ubyte";
+    std::string mnist_test_images_filename = "t10k-images-idx3-ubyte";
+    std::string mnist_test_labels_filename = "t10k-labels-idx3-ubyte";
 
     auto images = read_mnist_scaled(mnist_test_images_filename);
     // auto labels = read_mnist(mnist_test_labels_filename);
@@ -167,9 +163,19 @@ void run_inference(std::string filename) {
             std::pmr::vector<float>(num_images_in_batch * 30 * 30);
         auto image_padded_span = span_3d_float({inum_images_in_batch, 30, 30},
                                                image_vector_padded.data());
+
+        std::cout << "image_padded "
+                  << image_padded_span(
+                         0, multi::_,
+                         multi::_)  // <- TODO why does this segfault on fugaku?
+                  << std::endl;
+
         image_padded_span(multi::_, {1, 29}, {1, 29}) =
             span_3d_float({inum_images_in_batch, 28, 28},
                           images.data() + batch_index * (batch_size * 28 * 28));
+
+        std::cout << "image_padded " << image_padded_span(0, multi::_, multi::_)
+                  << std::endl;
 
         auto conv1_output =
             std::pmr::vector<float>(num_images_in_batch * 8 * 28 * 28);
@@ -344,8 +350,9 @@ void run_inference(std::string filename) {
             span_2d_float({inum_images_in_batch, 10}, fc1_output.data());
         auto conv2_output_flattened = span_2d_float(
             {inum_images_in_batch, 16 * 7 * 7}, conv2_output_pooled.data());
-        fc1_output_span = multi::blas::gemm(1., conv2_output_flattened,
-                                            fc1_weight_span.transposed());
+        // fc1_output_span = multi::blas::gemm(1., conv2_output_flattened,
+        // //TODO use one of them!
+        //                                     fc1_weight_span.transposed());
         // using multi::operator+=; // doesn't work yet? ->
         // https://github.com/correaa/boost-multi/blob/master/include/boost/multi/adaptors/blas/README.md
         // footnote 3
@@ -354,7 +361,8 @@ void run_inference(std::string filename) {
         //                fc1_output_span.begin(), fc1_output_span.begin(),
         //                [](auto ex, auto ey) {
         //                    return ex[0] + ey[0];
-        //                });  // this would also be nicer without the [0] indexing
+        //                });  // this would also be nicer without the [0]
+        //                indexing
 
         // {
         //     using namespace tblis::indices;
@@ -382,10 +390,10 @@ int main(int, char **) {
     // (but trained for 100 epochs)
     // and then saved with safetensors.torch.save_model(model,
     // "model.safetensors")
-    std::string filename = "../data/model-mnist.safetensors";
+    std::string filename = "./model-mnist.safetensors";
 
 #ifdef DALOTIA_E_WITH_BOOST_MULTI
-    run_inference(filename);
+    run_inference_boost_multi(filename);
 #else
     throw std::runtime_error("DALOTIA_E_WITH_BOOST_MULTI not defined");
 #endif  // DALOTIA_E_WITH_BOOST_MULTI
