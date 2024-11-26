@@ -66,10 +66,7 @@ if (DALOTIA_E_WITH_BOOST_MULTI)
   target_link_libraries(multi ${BLAS_LIBRARIES})
 endif (DALOTIA_E_WITH_BOOST_MULTI)
 
-find_package(OpenMP) #TODO if this should not be always on, parameterize in dalotia as well
-if (OpenMP_CXX_FOUND)
-  target_link_libraries(dalotia_cpp OpenMP::OpenMP_CXX)
-endif ()
+find_package(OpenMP) #TODO this should not be always on?
 
 
 add_subdirectory(benchmarks)
