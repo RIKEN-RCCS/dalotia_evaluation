@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
+#include <cstring>  // std::memset
 #include <fstream>
 #include <iostream>
 
@@ -132,36 +134,62 @@ void assert_close(float a, float b, float tol = 1e-4) {
 #endif  // NDEBUG
 }
 
-void run_inference_slow_loops(std::string filename) {
-    const auto [conv1_weight, conv1_bias] = test_load(filename, "conv1");
-    std::array<int, 4> conv1_weight_extents = {8, 1, 3, 3};
-    auto conv1_weight_indexer = get_tensor_indexer<4>(conv1_weight_extents);
-    auto [conv2_weight, conv2_bias] = test_load(filename, "conv2");
-    std::array<int, 4> conv2_weight_extents = {16, 8, 3, 3};
-    auto conv2_weight_indexer = get_tensor_indexer<4>(conv2_weight_extents);
-    auto [fc1_weight, fc1_bias] = test_load(filename, "fc1");
-    std::array<int, 2> fc1_weight_extents = {10, 784};
-    auto fc1_weight_indexer = get_tensor_indexer<2>(fc1_weight_extents);
+std::chrono::duration<double> run_inference_slow_loops(
+    const std::pmr::vector<float> &conv1_weight,
+    const std::pmr::vector<float> &conv1_bias,
+    const std::array<int, 4> &conv1_weight_extents,
+    const std::pmr::vector<float> &conv2_weight,
+    const std::pmr::vector<float> &conv2_bias,
+    const std::array<int, 4> &conv2_weight_extents,
+    const std::pmr::vector<float> &fc1_weight,
+    const std::pmr::vector<float> &fc1_bias,
+    const std::array<int, 2> &fc1_weight_extents,
+    const std::pmr::vector<float> &images,
+    const std::pmr::vector<float> &labels, std::pmr::vector<int> &results) {
+    const auto conv1_weight_indexer =
+        get_tensor_indexer<4>(conv1_weight_extents);
+    const auto conv2_weight_indexer =
+        get_tensor_indexer<4>(conv2_weight_extents);
+    const auto fc1_weight_indexer = get_tensor_indexer<2>(fc1_weight_extents);
 
-    // load the mnist test data // as in
-    // https://medium.com/@myringoleMLGOD/simple-convolutional-neural-network-cnn-for-dummies-in-pytorch-a-step-by-step-guide-6f4109f6df80
-    // too
-    std::string mnist_test_images_filename = "./t10k-images-idx3-ubyte";
-    std::string mnist_test_labels_filename = "./t10k-labels-idx1-ubyte";
+    constexpr size_t batch_size = 64;
 
-    auto images = read_mnist_scaled(mnist_test_images_filename);
-    // assert on the first non-0 value
-    assert_close(images[7 * 28 + 6], 0.3294);
-    auto labels = read_mnist_scaled(mnist_test_labels_filename);
-    auto total_num_images = images.size() / (28 * 28);
-    assert(total_num_images == labels.size());
+    auto image_vector_padded = std::pmr::vector<float>(batch_size * 30 * 30);
+    const std::array<int, 3> image_padded_extents = {batch_size, 30, 30};
+    const auto image_padded_indexer =
+        get_tensor_indexer<3>(image_padded_extents);
+    auto conv1_output = std::pmr::vector<float>(batch_size * 8 * 28 * 28);
+    const std::array<int, 4> conv1_output_extents = {batch_size, 8, 28, 28};
+    const auto conv1_output_indexer =
+        get_tensor_indexer<4>(conv1_output_extents);
+    auto conv1_padded_output_pooled =
+        std::pmr::vector<float>(batch_size * 8 * 16 * 16);
+    const std::array<int, 4> conv1_padded_output_pooled_extents = {batch_size,
+                                                                   8, 16, 16};
+    const auto conv1_padded_output_pooled_indexer =
+        get_tensor_indexer<4>(conv1_padded_output_pooled_extents);
+    auto conv2_output = std::pmr::vector<float>(batch_size * 16 * 14 * 14);
+    const std::array<int, 4> conv2_output_extents = {batch_size, 16, 14, 14};
+    const auto conv2_output_indexer =
+        get_tensor_indexer<4>(conv2_output_extents);
+    auto conv2_output_pooled = std::pmr::vector<float>(batch_size * 16 * 7 * 7);
+    const std::array<int, 4> conv2_output_pooled_extents = {batch_size, 16, 7,
+                                                            7};
+    const std::array<int, 2> conv2_output_flat_extents = {batch_size,
+                                                          16 * 7 * 7};
+    const auto conv2_output_flat_indexer =
+        get_tensor_indexer<2>(conv2_output_flat_extents);
 
-    std::pmr::vector<int> results(total_num_images);
+    auto fc1_output = std::pmr::vector<float>(batch_size * 10);
+    const std::array<int, 2> fc1_output_extents = {batch_size, 10};
+    const auto fc1_output_indexer = get_tensor_indexer<2>(fc1_output_extents);
 
     // minibatching
-    constexpr size_t batch_size = 64;
+    auto total_num_images = labels.size();
     auto num_batches = static_cast<int>(
         std::ceil(total_num_images / static_cast<float>(batch_size)));
+
+    const auto start = std::chrono::high_resolution_clock::now();
     for (size_t batch_index = 0; batch_index < num_batches; ++batch_index) {
         auto num_images_in_batch =
             std::min(batch_size, total_num_images - batch_index * batch_size);
@@ -170,15 +198,21 @@ void run_inference_slow_loops(std::string filename) {
         std::cout << "batch index: " << batch_index << " / " << num_batches
                   << " num images in batch: " << num_images_in_batch
                   << std::endl;
+        // zero all vector data structures
+        std::memset(image_vector_padded.data(), 0,
+                    image_vector_padded.size() * sizeof(float));
+        std::memset(conv1_output.data(), 0,
+                    conv1_output.size() * sizeof(float));
+        std::memset(conv1_padded_output_pooled.data(), 0,
+                    conv1_padded_output_pooled.size() * sizeof(float));
+        std::memset(conv2_output.data(), 0,
+                    conv2_output.size() * sizeof(float));
+        std::memset(conv2_output_pooled.data(), 0,
+                    conv2_output_pooled.size() * sizeof(float));
+        std::memset(fc1_output.data(), 0, fc1_output.size() * sizeof(float));
 
         // apply first convolution
         // copy data to larger array for zero-padding at the edges
-        auto image_vector_padded =
-            std::pmr::vector<float>(num_images_in_batch * 30 * 30);
-        std::array<int, 3> image_padded_extents = {inum_images_in_batch, 30,
-                                                   30};
-        auto image_padded_indexer = get_tensor_indexer<3>(image_padded_extents);
-
         for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int i = 0; i < 28; ++i) {
                 for (int j = 0; j < 28; ++j) {
@@ -189,12 +223,6 @@ void run_inference_slow_loops(std::string filename) {
                 }
             }
         }
-
-        auto conv1_output =
-            std::pmr::vector<float>(num_images_in_batch * 8 * 28 * 28);
-        std::array<int, 4> conv1_output_extents = {inum_images_in_batch, 8, 28,
-                                                   28};
-        auto conv1_output_indexer = get_tensor_indexer<4>(conv1_output_extents);
         for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int k = 0; k < 8; ++k) {
                 for (int i = 1; i < 29; ++i) {
@@ -221,12 +249,7 @@ void run_inference_slow_loops(std::string filename) {
         }
 
         // apply max pooling
-        auto conv1_output_pooled =
-            std::pmr::vector<float>(num_images_in_batch * 8 * 14 * 14);
-        std::array<int, 4> conv1_output_pooled_extents = {inum_images_in_batch,
-                                                          8, 14, 14};
-        auto conv1_output_pooled_indexer =
-            get_tensor_indexer<4>(conv1_output_pooled_extents);
+        // use larger array for zero-padding at the edges
         for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int k = 0; k < 8; ++k) {
                 for (int i = 0; i < 14; ++i) {
@@ -240,43 +263,19 @@ void run_inference_slow_loops(std::string filename) {
                                         {o, k, 2 * i + m, 2 * j + n})]);
                             }
                         }
-                        conv1_output_pooled[conv1_output_pooled_indexer(
-                            {o, k, i, j})] = max_val;
+                        conv1_padded_output_pooled
+                            [conv1_padded_output_pooled_indexer(
+                                {o, k, i + 1, j + 1})] = max_val;
                     }
                 }
             }
         }
 
-        // print_first_formatted(conv1_output_pooled,
-        // conv1_output_pooled_extents,
+        // print_first_formatted(conv1_padded_output_pooled,
+        // conv1_padded_output_pooled_extents,
         //                       std::cout);
 
         // apply second convolution
-        // copy data to larger array for zero-padding at the edges
-        auto feature_vector_padded =
-            std::pmr::vector<float>(num_images_in_batch * 8 * 16 * 16);
-        std::array<int, 4> feature_padded_extents = {inum_images_in_batch, 8,
-                                                     16, 16};
-        auto feature_padded_indexer =
-            get_tensor_indexer<4>(feature_padded_extents);
-        for (int o = 0; o < inum_images_in_batch; ++o) {
-            for (int k = 0; k < 8; ++k) {
-                for (int i = 1; i < 15; ++i) {
-                    for (int j = 1; j < 15; ++j) {
-                        feature_vector_padded[feature_padded_indexer(
-                            {o, k, i, j})] =
-                            conv1_output_pooled[conv1_output_pooled_indexer(
-                                {o, k, i - 1, j - 1})];
-                    }
-                }
-            }
-        }
-
-        auto conv2_output =
-            std::pmr::vector<float>(num_images_in_batch * 16 * 14 * 14);
-        std::array<int, 4> conv2_output_extents = {inum_images_in_batch, 16, 14,
-                                                   14};
-        auto conv2_output_indexer = get_tensor_indexer<4>(conv2_output_extents);
         for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int k = 0; k < 16; ++k) {
                 for (int i = 1; i < 15; ++i) {
@@ -288,8 +287,8 @@ void run_inference_slow_loops(std::string filename) {
                                     value +=
                                         conv2_weight[conv2_weight_indexer(
                                             {k, l, m, n})] *
-                                        feature_vector_padded
-                                            [feature_padded_indexer(
+                                        conv1_padded_output_pooled
+                                            [conv1_padded_output_pooled_indexer(
                                                 {o, l, i + m - 1, j + n - 1})];
                                 }
                             }
@@ -306,10 +305,6 @@ void run_inference_slow_loops(std::string filename) {
         }
 
         // apply max pooling
-        auto conv2_output_pooled =
-            std::pmr::vector<float>(num_images_in_batch * 16 * 7 * 7);
-        std::array<int, 4> conv2_output_pooled_extents = {inum_images_in_batch,
-                                                          16, 7, 7};
         auto conv2_output_pooled_indexer =
             get_tensor_indexer<4>(conv2_output_pooled_extents);
         for (int o = 0; o < inum_images_in_batch; ++o) {
@@ -333,13 +328,6 @@ void run_inference_slow_loops(std::string filename) {
         }
 
         // apply dense layer
-        auto fc1_output = std::pmr::vector<float>(num_images_in_batch * 10);
-        std::array<int, 2> fc1_output_extents = {inum_images_in_batch, 10};
-        auto fc1_output_indexer = get_tensor_indexer<2>(fc1_output_extents);
-        std::array<int, 2> conv2_output_flat_extents = {inum_images_in_batch,
-                                                        16 * 7 * 7};
-        auto conv2_output_flat_indexer =
-            get_tensor_indexer<2>(conv2_output_flat_extents);
         for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int k = 0; k < 10; ++k) {
                 float value = 0.;
@@ -366,10 +354,14 @@ void run_inference_slow_loops(std::string filename) {
             assert_close(conv1_output[0], 0.1796);
             assert_close(conv1_output[conv1_output_indexer({0, 7, 27, 27})],
                          0.6550);
-            assert_close(conv1_output_pooled[0], 0.1796);
-            assert_close(conv1_output_pooled[conv1_output_pooled_indexer(
-                             {0, 7, 13, 13})],
-                         0.6550);
+            assert_close(
+                conv1_padded_output_pooled[conv1_padded_output_pooled_indexer(
+                    {0, 0, 1, 1})],
+                0.1796);
+            assert_close(
+                conv1_padded_output_pooled[conv1_padded_output_pooled_indexer(
+                    {0, 7, 14, 14})],
+                0.6550);
             assert_close(conv2_output[0], 0.4063);
             assert_close(conv2_output[conv2_output_indexer({0, 1, 13, 13})],
                          0.1789);
@@ -408,19 +400,10 @@ void run_inference_slow_loops(std::string filename) {
         }
 #endif  // NDEBUG
     }
+    const auto end = std::chrono::high_resolution_clock::now();
+    const std::chrono::duration<double> diff = end - start;
 
-    int num_correct = 0;
-    int num_incorrect = 0;
-    for (int o = 0; o < total_num_images; ++o) {
-        if (results[o] == labels[o]) {
-            num_correct++;
-        } else {
-            num_incorrect++;
-        }
-    }
-    assert(num_correct + num_incorrect == total_num_images);
-    assert(num_correct == 9862);
-    std::cout << "Got " << num_correct << "/" << total_num_images << std::endl;
+    return diff;
 }
 
 #ifdef DALOTIA_E_WITH_BOOST_MULTI
@@ -746,11 +729,68 @@ int main(int, char **) {
     // "model.safetensors")
     std::string filename = "./model-mnist.safetensors";
 
+    const auto [conv1_weight, conv1_bias] = test_load(filename, "conv1");
+    const std::array<int, 4> conv1_weight_extents = {8, 1, 3, 3};
+    const auto [conv2_weight, conv2_bias] = test_load(filename, "conv2");
+    const std::array<int, 4> conv2_weight_extents = {16, 8, 3, 3};
+    const auto [fc1_weight, fc1_bias] = test_load(filename, "fc1");
+    const std::array<int, 2> fc1_weight_extents = {10, 784};
+
+    // load the mnist test data // as in
+    // https://medium.com/@myringoleMLGOD/simple-convolutional-neural-network-cnn-for-dummies-in-pytorch-a-step-by-step-guide-6f4109f6df80
+    // too
+    const std::string mnist_test_images_filename = "./t10k-images-idx3-ubyte";
+    const std::string mnist_test_labels_filename = "./t10k-labels-idx1-ubyte";
+
+    const auto images = read_mnist_scaled(mnist_test_images_filename);
+    // assert on the first non-0 value
+    assert_close(images[7 * 28 + 6], 0.3294);
+    const auto labels = read_mnist_scaled(mnist_test_labels_filename);
+    const auto total_num_images = images.size() / (28 * 28);
+    assert(total_num_images == labels.size());
+
+    std::pmr::vector<int> results(total_num_images);
+    typedef std::function<std::chrono::duration<double>(
+        const std::pmr::vector<float> &conv1_weight,
+        const std::pmr::vector<float> &conv1_bias,
+        const std::array<int, 4> &conv1_weight_extents,
+        const std::pmr::vector<float> &conv2_weight,
+        const std::pmr::vector<float> &conv2_bias,
+        const std::array<int, 4> &conv2_weight_extents,
+        const std::pmr::vector<float> &fc1_weight,
+        const std::pmr::vector<float> &fc1_bias,
+        const std::array<int, 2> &fc1_weight_extents,
+        const std::pmr::vector<float> &images,
+        const std::pmr::vector<float> &labels, std::pmr::vector<int> &results)>
+        inference_function;
+    std::vector<inference_function> inference_functions = {
+        run_inference_slow_loops};
+
 #ifdef DALOTIA_E_WITH_BOOST_MULTI
-    run_inference_boost_multi(filename);
-#else
-    run_inference_slow_loops(filename);
-    throw std::runtime_error("DALOTIA_E_WITH_BOOST_MULTI not defined");
+    inference_functions.push_back(run_inference_boost_multi);
 #endif  // DALOTIA_E_WITH_BOOST_MULTI
+
+    for (const auto &inference_function : inference_functions) {
+        std::memset(results.data(), 0, results.size() * sizeof(int));
+        const auto duration = inference_function(
+            conv1_weight, conv1_bias, conv1_weight_extents, conv2_weight,
+            conv2_bias, conv2_weight_extents, fc1_weight, fc1_bias,
+            fc1_weight_extents, images, labels, results);
+        int num_correct = 0;
+        int num_incorrect = 0;
+        for (int o = 0; o < total_num_images; ++o) {
+            if (results[o] == labels[o]) {
+                num_correct++;
+            } else {
+                num_incorrect++;
+            }
+        }
+        assert(num_correct + num_incorrect == total_num_images);
+        assert(num_correct == 9862);
+        std::cout << "Got " << num_correct << "/" << total_num_images
+                  << std::endl;
+        std::cout << "Duration: " << duration.count() << "s" << std::endl;
+    }
+
     return 0;
 }
