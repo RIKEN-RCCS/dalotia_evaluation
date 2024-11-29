@@ -7,7 +7,7 @@
 #include <iostream>
 
 #include "dalotia.hpp"
-#include "safetensors_file.hpp"
+#include "dalotia_safetensors_file.hpp"
 #ifdef DALOTIA_E_WITH_BOOST_MULTI
 // #include "mdspan/mdspan.hpp"
 #include <boost/multi/array.hpp>
@@ -40,9 +40,9 @@ int reverseEndianness(int i) {
     c4 = (i >> 24) & 255;
     return ((int)c1 << 24) + ((int)c2 << 16) + ((int)c3 << 8) + c4;
 }
-std::pmr::vector<float> read_mnist_scaled(std::string full_path) {
-    std::pmr::vector<uint8_t> vector_of_images;
-    std::pmr::vector<float> vector_of_images_scaled;
+dalotia::vector<float> read_mnist_scaled(std::string full_path) {
+    dalotia::vector<uint8_t> vector_of_images;
+    dalotia::vector<float> vector_of_images_scaled;
     std::ifstream file(full_path, std::ios::binary);
     std::cout << "Reading " << full_path << std::endl;
     if (file.is_open()) {
@@ -111,7 +111,7 @@ std::function<int(std::array<int, dim>)> get_tensor_indexer(
 }
 
 template <typename ExtentsType>
-void print_first_formatted(const std::pmr::vector<float> &output,
+void print_first_formatted(const dalotia::vector<float> &output,
                            const ExtentsType &extents, std::ostream &os) {
     for (int i = 0; i < 1; ++i) {  // extents[0]
         os << "output for image " << i << ": " << std::endl;
@@ -135,17 +135,17 @@ void assert_close(float a, float b, float tol = 1e-4) {
 }
 
 std::chrono::duration<double> run_inference_slow_loops(
-    const std::pmr::vector<float> &conv1_weight,
-    const std::pmr::vector<float> &conv1_bias,
+    const dalotia::vector<float> &conv1_weight,
+    const dalotia::vector<float> &conv1_bias,
     const std::array<int, 4> &conv1_weight_extents,
-    const std::pmr::vector<float> &conv2_weight,
-    const std::pmr::vector<float> &conv2_bias,
+    const dalotia::vector<float> &conv2_weight,
+    const dalotia::vector<float> &conv2_bias,
     const std::array<int, 4> &conv2_weight_extents,
-    const std::pmr::vector<float> &fc1_weight,
-    const std::pmr::vector<float> &fc1_bias,
+    const dalotia::vector<float> &fc1_weight,
+    const dalotia::vector<float> &fc1_bias,
     const std::array<int, 2> &fc1_weight_extents,
-    const std::pmr::vector<float> &images,
-    const std::pmr::vector<float> &labels, std::pmr::vector<int> &results) {
+    const dalotia::vector<float> &images, const dalotia::vector<float> &labels,
+    dalotia::vector<int> &results) {
     const auto conv1_weight_indexer =
         get_tensor_indexer<4>(conv1_weight_extents);
     const auto conv2_weight_indexer =
@@ -154,25 +154,25 @@ std::chrono::duration<double> run_inference_slow_loops(
 
     constexpr size_t batch_size = 64;
 
-    auto image_vector_padded = std::pmr::vector<float>(batch_size * 30 * 30);
+    auto image_vector_padded = dalotia::vector<float>(batch_size * 30 * 30);
     const std::array<int, 3> image_padded_extents = {batch_size, 30, 30};
     const auto image_padded_indexer =
         get_tensor_indexer<3>(image_padded_extents);
-    auto conv1_output = std::pmr::vector<float>(batch_size * 8 * 28 * 28);
+    auto conv1_output = dalotia::vector<float>(batch_size * 8 * 28 * 28);
     const std::array<int, 4> conv1_output_extents = {batch_size, 8, 28, 28};
     const auto conv1_output_indexer =
         get_tensor_indexer<4>(conv1_output_extents);
     auto conv1_padded_output_pooled =
-        std::pmr::vector<float>(batch_size * 8 * 16 * 16);
+        dalotia::vector<float>(batch_size * 8 * 16 * 16);
     const std::array<int, 4> conv1_padded_output_pooled_extents = {batch_size,
                                                                    8, 16, 16};
     const auto conv1_padded_output_pooled_indexer =
         get_tensor_indexer<4>(conv1_padded_output_pooled_extents);
-    auto conv2_output = std::pmr::vector<float>(batch_size * 16 * 14 * 14);
+    auto conv2_output = dalotia::vector<float>(batch_size * 16 * 14 * 14);
     const std::array<int, 4> conv2_output_extents = {batch_size, 16, 14, 14};
     const auto conv2_output_indexer =
         get_tensor_indexer<4>(conv2_output_extents);
-    auto conv2_output_pooled = std::pmr::vector<float>(batch_size * 16 * 7 * 7);
+    auto conv2_output_pooled = dalotia::vector<float>(batch_size * 16 * 7 * 7);
     const std::array<int, 4> conv2_output_pooled_extents = {batch_size, 16, 7,
                                                             7};
     const std::array<int, 2> conv2_output_flat_extents = {batch_size,
@@ -180,7 +180,7 @@ std::chrono::duration<double> run_inference_slow_loops(
     const auto conv2_output_flat_indexer =
         get_tensor_indexer<2>(conv2_output_flat_extents);
 
-    auto fc1_output = std::pmr::vector<float>(batch_size * 10);
+    auto fc1_output = dalotia::vector<float>(batch_size * 10);
     const std::array<int, 2> fc1_output_extents = {batch_size, 10};
     const auto fc1_output_indexer = get_tensor_indexer<2>(fc1_output_extents);
 
@@ -199,8 +199,9 @@ std::chrono::duration<double> run_inference_slow_loops(
                   << " num images in batch: " << num_images_in_batch
                   << std::endl;
         // zero all vector data structures
-        std::memset(image_vector_padded.data(), 0,
-                    image_vector_padded.size() * sizeof(float));
+        // std::memset(
+        //     image_vector_padded.data(), 0,
+        //     image_vector_padded.size() * sizeof(float));
         std::memset(conv1_output.data(), 0,
                     conv1_output.size() * sizeof(float));
         std::memset(conv1_padded_output_pooled.data(), 0,
@@ -497,7 +498,7 @@ void run_inference_boost_multi(std::string filename) {
         // apply first convolution
         // copy data to larger array for zero-padding at the edges
         auto image_vector_padded =
-            std::pmr::vector<float>(num_images_in_batch * 30 * 30);
+            dalotia::vector<float>(num_images_in_batch * 30 * 30);
         auto image_padded_span = span_3d_float({inum_images_in_batch, 30, 30},
                                                image_vector_padded.data());
 
@@ -515,7 +516,7 @@ void run_inference_boost_multi(std::string filename) {
                   << std::endl;
 
         auto conv1_output =
-            std::pmr::vector<float>(num_images_in_batch * 8 * 28 * 28);
+            dalotia::vector<float>(num_images_in_batch * 8 * 28 * 28);
         auto conv1_output_span = span_4d_float(
             {inum_images_in_batch, 8, 28, 28}, conv1_output.data());
 #pragma omp parallel for
@@ -565,8 +566,8 @@ void run_inference_boost_multi(std::string filename) {
         // }
 
         // apply max pooling
-        std::pmr::vector<float> conv1_output_pooled(num_images_in_batch * 8 *
-                                                    14 * 14);
+        dalotia::vector<float> conv1_output_pooled(num_images_in_batch * 8 *
+                                                   14 * 14);
         auto conv1_output_pooled_span = span_4d_float(
             {inum_images_in_batch, 8, 14, 14}, conv1_output_pooled.data());
 #pragma omp parallel for
@@ -587,7 +588,7 @@ void run_inference_boost_multi(std::string filename) {
         // apply second convolution
         // copy data to larger array for zero-padding at the edges
         auto feature_vector_padded =
-            std::pmr::vector<float>(num_images_in_batch * 8 * 16 * 16);
+            dalotia::vector<float>(num_images_in_batch * 8 * 16 * 16);
         auto feature_padded_span = span_4d_float(
             {inum_images_in_batch, 8, 16, 16}, feature_vector_padded.data());
         feature_padded_span(multi::_, multi::_, {1, 15}, {1, 15}) =
@@ -595,7 +596,7 @@ void run_inference_boost_multi(std::string filename) {
         const auto &c_feature_padded_span = feature_padded_span;
 
         auto conv2_output =
-            std::pmr::vector<float>(num_images_in_batch * 16 * 14 * 14);
+            dalotia::vector<float>(num_images_in_batch * 16 * 14 * 14);
         auto conv2_output_span = span_4d_float(
             {inum_images_in_batch, 16, 14, 14}, conv2_output.data());
 
@@ -662,8 +663,8 @@ void run_inference_boost_multi(std::string filename) {
         }
 
         // apply max pooling
-        std::pmr::vector<float> conv2_output_pooled(num_images_in_batch * 16 *
-                                                    7 * 7);
+        dalotia::vector<float> conv2_output_pooled(num_images_in_batch * 16 *
+                                                   7 * 7);
         auto conv2_output_pooled_span = span_4d_float(
             {inum_images_in_batch, 16, 7, 7}, conv2_output_pooled.data());
 #pragma omp parallel for
@@ -682,7 +683,7 @@ void run_inference_boost_multi(std::string filename) {
         }
 
         // apply dense layer
-        std::pmr::vector<float> fc1_output(num_images_in_batch * 10);
+        dalotia::vector<float> fc1_output(num_images_in_batch * 10);
         auto fc1_output_span =
             span_2d_float({inum_images_in_batch, 10}, fc1_output.data());
         auto conv2_output_flattened = span_2d_float(
@@ -749,29 +750,39 @@ int main(int, char **) {
     const auto total_num_images = images.size() / (28 * 28);
     assert(total_num_images == labels.size());
 
-    std::pmr::vector<int> results(total_num_images);
+    dalotia::vector<int> results(total_num_images);
     typedef std::function<std::chrono::duration<double>(
-        const std::pmr::vector<float> &conv1_weight,
-        const std::pmr::vector<float> &conv1_bias,
+        const dalotia::vector<float> &conv1_weight,
+        const dalotia::vector<float> &conv1_bias,
         const std::array<int, 4> &conv1_weight_extents,
-        const std::pmr::vector<float> &conv2_weight,
-        const std::pmr::vector<float> &conv2_bias,
+        const dalotia::vector<float> &conv2_weight,
+        const dalotia::vector<float> &conv2_bias,
         const std::array<int, 4> &conv2_weight_extents,
-        const std::pmr::vector<float> &fc1_weight,
-        const std::pmr::vector<float> &fc1_bias,
+        const dalotia::vector<float> &fc1_weight,
+        const dalotia::vector<float> &fc1_bias,
         const std::array<int, 2> &fc1_weight_extents,
-        const std::pmr::vector<float> &images,
-        const std::pmr::vector<float> &labels, std::pmr::vector<int> &results)>
+        const dalotia::vector<float> &images,
+        const dalotia::vector<float> &labels, dalotia::vector<int> &results)>
         inference_function;
     std::vector<inference_function> inference_functions = {
         run_inference_slow_loops};
 
 #ifdef DALOTIA_E_WITH_BOOST_MULTI
     inference_functions.push_back(run_inference_boost_multi);
+#else
+    std::cout << "BOOST_MULTI not enabled" << std::endl;
 #endif  // DALOTIA_E_WITH_BOOST_MULTI
+#ifdef DALOTIA_E_WITH_NDIRECT
+    inference_functions.push_back(run_inference_ndirect);
+#else
+    std::cout << "NDIRECT not enabled" << std::endl;
+#endif  // DALOTIA_E_WITH_NDIRECT
+
+    std::reverse(inference_functions.begin(), inference_functions.end());
 
     for (const auto &inference_function : inference_functions) {
         std::memset(results.data(), 0, results.size() * sizeof(int));
+
         const auto duration = inference_function(
             conv1_weight, conv1_bias, conv1_weight_extents, conv2_weight,
             conv2_bias, conv2_weight_extents, fc1_weight, fc1_bias,
