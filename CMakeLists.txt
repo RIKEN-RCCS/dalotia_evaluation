@@ -25,20 +25,27 @@ FetchContent_Declare(
   #       -D DALOTIA_BUILD_TESTS=ON
   FIND_PACKAGE_ARGS
 )
-set(DALOTIA_BUILD_TESTS OFF)
+set(DALOTIA_BUILD_TESTS ON)
 FetchContent_MakeAvailable(dalotia)
 FetchContent_GetProperties(dalotia SOURCE_DIR DALOTIA_CPP_INCLUDE_DIR BINARY_DIR DALOTIA_CPP_LIBRARY)
 message(STATUS "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
 message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
 
-find_package(BLAS REQUIRED BLA_STATIC)
+set(BLA_STATIC ON)
+set(BLA_VENDOR "OpenBLAS") # or: Fujitsu_SSL2...
+find_package(BLAS)
+if (NOT BLAS_FOUND)
+  # try to find any BLAS
+  unset(BLA_VENDOR)
+  find_package(BLAS REQUIRED)
+endif (NOT BLAS_FOUND)
 
 if (DALOTIA_E_WITH_NDIRECT)
   include(ExternalProject)
   ExternalProject_Add(
     ndirect
-    GIT_REPOSITORY https://github.com/nDIRECT/nDIRECT.git
-    GIT_TAG 01ad5b38c5b6187018e713c644eb5018babc30b7
+    GIT_REPOSITORY https://github.com/freifrauvonbleifrei/nDIRECT.git
+    GIT_TAG main #TODO replace with final url/tag
     BUILD_IN_SOURCE 1
     SOURCE_DIR ${ndirect_SOURCE_DIR} #/direct_cnn
     CONFIGURE_COMMAND ""
@@ -46,7 +53,9 @@ if (DALOTIA_E_WITH_NDIRECT)
     INSTALL_COMMAND ""
   )
   ExternalProject_Get_Property(ndirect SOURCE_DIR)
-  message(STATUS "ndirect_SOURCE_DIR: ${SOURCE_DIR}") #TODO test on fugaku
+  message(STATUS "ndirect_SOURCE_DIR: ${SOURCE_DIR}")
+  set(NDIRECT_CPP_INCLUDE_DIR ${SOURCE_DIR}/direct_cnn)
+  set(NDIRECT_CPP_LIBRARY_DIR ${SOURCE_DIR}/direct_cnn)
 endif (DALOTIA_E_WITH_NDIRECT)
 
 
@@ -63,7 +72,7 @@ if (DALOTIA_E_WITH_BOOST_MULTI)
   FetchContent_GetProperties(multi SOURCE_DIR MULTI_CPP_INCLUDE_DIR BINARY_DIR MULTI_CPP_LIBRARY)
   # target_include_directories(dalotia_cpp PUBLIC ${MULTI_CPP_INCLUDE_DIR} ${MULTI_DIR})
   # target_link_libraries(dalotia_cpp multi)
-  target_link_libraries(multi ${BLAS_LIBRARIES})
+  target_link_libraries(multi INTERFACE ${BLAS_LIBRARIES})
 endif (DALOTIA_E_WITH_BOOST_MULTI)
 
 find_package(OpenMP) #TODO this should not be always on?

@@ -1,5 +1,7 @@
 add_executable( mnist_cpp mnist.cpp )
 target_link_libraries( mnist_cpp PUBLIC dalotia_cpp )
+# use openblas header
+target_include_directories( mnist_cpp PUBLIC ${OpenBLAS_INCLUDE_DIR})
 target_link_libraries(mnist_cpp PRIVATE BLAS::BLAS)
 if (DALOTIA_E_WITH_BOOST_MULTI)
     target_compile_options( mnist_cpp PUBLIC "-DDALOTIA_E_WITH_BOOST_MULTI")
@@ -9,6 +11,8 @@ if (DALOTIA_E_WITH_BOOST_MULTI)
 endif(DALOTIA_E_WITH_BOOST_MULTI)
 if (DALOTIA_E_WITH_NDIRECT)
     target_compile_options( mnist_cpp PUBLIC "-DDALOTIA_E_WITH_NDIRECT")
+    target_include_directories( mnist_cpp PRIVATE ${ndirect_SOURCE_DIR} ${NDIRECT_CPP_INCLUDE_DIR})
+    target_link_libraries( mnist_cpp PRIVATE ${NDIRECT_CPP_LIBRARY_DIR}/libnd.a )
     add_dependencies( mnist_cpp ndirect )
 endif(DALOTIA_E_WITH_NDIRECT)
 
@@ -34,7 +38,7 @@ function(download_and_extract_gz target_name url hash)
     string(REGEX REPLACE ".gz$" "" downloaded_file_name ${downloaded_archive_name})
 
     # only download if not already downloaded
-    if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/${downloaded_archive_name})
+    if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/${downloaded_file_name})
         message(STATUS "Downloading ${downloaded_archive_name} from ${url}")
         FetchContent_Declare( ${target_name}
             URL ${url}
@@ -45,16 +49,15 @@ function(download_and_extract_gz target_name url hash)
             FetchContent_MakeAvailable(${target_name})
         endif()
 
-
         # file(ARCHIVE_EXTRACT INPUT ${${target_name}_SOURCE_DIR}/${downloaded_archive_name} DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/data) # <- doesn't work with .gz
         message(STATUS "unpack ${target_name}_SOURCE_DIR: ${${target_name}_SOURCE_DIR}/${downloaded_archive_name} at ${CMAKE_CURRENT_BINARY_DIR}")
         file(COPY "${${target_name}_SOURCE_DIR}/${downloaded_archive_name}" DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
         execute_process(
             COMMAND "gzip" "-d" "${downloaded_archive_name}"
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-            COMMAND_ERROR_IS_FATAL ANY
-        ) #TODO test
-    endif(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/${downloaded_archive_name})
+            # COMMAND_ERROR_IS_FATAL ANY
+        )
+    endif(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/${downloaded_file_name})
 endfunction()
 
 download_and_extract_gz(data_mnist_test_labels https://ossci-datasets.s3.amazonaws.com/mnist/t10k-labels-idx1-ubyte.gz f7ae60f92e00ec6debd23a6088c31dbd2371eca3ffa0defaefb259924204aec6)
