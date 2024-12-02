@@ -1,18 +1,20 @@
 
 program mnist_inference
 use dalotia_c_interface
-use,intrinsic::ISO_C_BINDING
+use,intrinsic::ISO_C_BINDING, only : C_float, C_double
+use,intrinsic :: iso_fortran_env, only : int64,real64
   implicit none
-    real :: images(28, 28, 10000)
-    integer :: labels(10000)
+    integer, parameter :: total_num_images = 10000
+    real :: images(28, 28, total_num_images)
+    integer :: labels(total_num_images)
     integer :: batch_size = 64
-    integer :: num_batches, batch, start, finish
+    integer :: num_batches, batch, start, finish, num_correct, num_incorrect
     character(100) :: filename_model, filename_images, filename_labels, tensor_name_conv1, tensor_name_conv2, tensor_name_fc1
     real(C_float), dimension(:,:,:,:), allocatable :: tensor_weight_conv1, tensor_weight_conv2
     real(C_float), dimension(:,:), allocatable :: tensor_weight_fc1
     real(C_float), dimension(:), allocatable :: tensor_bias_conv1, tensor_bias_conv2, tensor_bias_fc1
     integer, dimension(:), allocatable :: tensor_extents
-    integer, dimension(10000) :: predictions
+    integer, dimension(total_num_images) :: predictions
     type(C_ptr) :: dalotia_file_pointer
 
     ! fixed-size model arrays
@@ -32,7 +34,9 @@ use,intrinsic::ISO_C_BINDING
     real(C_float), dimension(10, 64) :: fc1_output
 
     ! increment variables
-    integer :: o, k, i, j
+    integer :: o, k, i, j, f, r
+    real(C_float) :: some_value
+    integer(kind=int64) :: start_time, end_time, count_rate
 
     filename_model = "./model-mnist.safetensors"
     filename_images = "./t10k-images-idx3-ubyte"
@@ -48,20 +52,23 @@ use,intrinsic::ISO_C_BINDING
     call dalotia_get_tensor_extents(dalotia_file_pointer, trim(tensor_name_conv1)//".bias", tensor_extents)
     call assert_equal_int(tensor_extents(1), 8)
     call assert_equal_int(ubound(tensor_bias_conv1, 1), 8)
+    write (*, *) "Loaded + ", trim(tensor_name_conv1)//".bias"
     call dalotia_load_tensor_dense(dalotia_file_pointer, trim(tensor_name_conv1)//".weight", tensor_weight_conv1)
+    write (*, *) "Loaded ", trim(tensor_name_conv1)//".weight"
     call dalotia_load_tensor_dense(dalotia_file_pointer, trim(tensor_name_conv2) //".bias", tensor_bias_conv2)
     call dalotia_load_tensor_dense(dalotia_file_pointer, trim(tensor_name_conv2)//".weight", tensor_weight_conv2)
     call dalotia_load_tensor_dense(dalotia_file_pointer, trim(tensor_name_fc1) //".bias", tensor_bias_fc1)
     call dalotia_load_tensor_dense(dalotia_file_pointer, trim(tensor_name_fc1)//".weight", tensor_weight_fc1)
+    
     call dalotia_close_file(dalotia_file_pointer)
 
     !copy to the fixed-size arrays
-    tensor_bias_conv1_fixed = tensor_bias_conv1(1:8)
-    tensor_weight_conv1_fixed = tensor_weight_conv1(1:3, 1:3, 1:1, 1:8)
-    tensor_bias_conv2_fixed = tensor_bias_conv2(1:16)
-    tensor_weight_conv2_fixed = tensor_weight_conv2(1:3, 1:3, 1:8, 1:16)
-    tensor_bias_fc1_fixed = tensor_bias_fc1(1:10)
-    tensor_weight_fc1_fixed = tensor_weight_fc1(1:784, 1:10)
+    tensor_bias_conv1_fixed = tensor_bias_conv1
+    tensor_weight_conv1_fixed = tensor_weight_conv1
+    tensor_bias_conv2_fixed = tensor_bias_conv2
+    tensor_weight_conv2_fixed = tensor_weight_conv2
+    tensor_bias_fc1_fixed = tensor_bias_fc1
+    tensor_weight_fc1_fixed = tensor_weight_fc1
 
     images = read_mnist_scaled(trim(filename_images))
     labels = read_mnist_labels(trim(filename_labels))
@@ -71,39 +78,144 @@ use,intrinsic::ISO_C_BINDING
 
     ! minibatching
     num_batches = ceiling(10000.0 / batch_size)
+    call system_clock(start_time)
     do batch = 1, num_batches
         start = (batch - 1) * batch_size + 1
         finish = min(10000, batch * batch_size)
 
-        !zero all intermediate arrays
-        conv1_output = 0.0
-        pool1_padded_output = 0.0
-        conv2_output = 0.0
-        pool2_output = 0.0
+        !zero intermediate arrays?
         fc1_output = 0.0
 
         ! copy images to a larger array for padding at the edges
         conv1_padded_input(2:29, 2:29, :) = images(:, :, start:(start+batch_size-1))
 
-        ! apply convolution
+        ! apply first convolution
         do o = 1, 64
           do k = 1, 8
             do i = 2, 29
               do j = 2, 29
-                conv1_output(j-1, i-1, k, o) = conv1_output(j-1, i-1, k, o) + &
-                  & sum(conv1_padded_input(j-1:j+1, i-1:i+1, o) * tensor_weight_conv1_fixed(:, :, 1, k)) + &
+                some_value = sum(conv1_padded_input(j-1:j+1, i-1:i+1, o) * tensor_weight_conv1_fixed(:, :, 1, k)) + &
                   & tensor_bias_conv1_fixed(k)
+                ! relu activation
+                if (some_value < 0.0) then
+                  some_value = 0.0
+                end if
+                conv1_output(j-1, i-1, k, o) = some_value
               end do
             end do
           end do
         end do
 
+        ! apply first pooling
+        do o = 1, 64
+          do k = 1, 8
+            do i = 1, 14
+              do j = 1, 14
+                pool1_padded_output(j+1, i+1, k, o) = maxval(conv1_output(2*j-1:2*j, 2*i-1:2*i, k, o))
+              end do
+            end do
+          end do
+        end do
+
+        ! apply second convolution
+        do o = 1, 64
+          do k = 1, 16
+              do i = 2, 15
+                do j = 2, 15
+                ! do c = 1, 8
+                  some_value = sum(pool1_padded_output(j-1:j+1, i-1:i+1, :, o) * tensor_weight_conv2_fixed(:, :, :, k)) + &
+                    & tensor_bias_conv2_fixed(k)
+                  ! relu activation
+                  if (some_value < 0.0) then
+                    some_value = 0.0
+                  end if
+                  conv2_output(j-1, i-1, k, o) = some_value
+                ! end do
+              end do
+            end do 
+          end do
+        end do
+
+        ! apply second pooling
+        do o = 1, 64
+          do k = 1, 16
+            do i = 1, 7
+              do j = 1, 7
+                pool2_output(j, i, k, o) = maxval(conv2_output(2*j-1:2*j, 2*i-1:2*i, k, o))
+              end do
+            end do
+          end do
+        end do
+
+        ! apply fully connected layer
+        do o = 1, 64
+          f = 1
+          do k = 1, 16
+            do i = 1, 7
+              do j = 1, 7
+                fc1_output(:, o) = fc1_output(:, o) + pool2_output(j, i, k, o) * tensor_weight_fc1_fixed(f, :)
+                f = f + 1
+              end do
+            end do
+          end do
+          ! call assert_equal_int(f, 785)
+          fc1_output(:, o) = fc1_output(:, o) + tensor_bias_fc1_fixed(:)
+        end do
+
+        ! make predictions via softmax
+        do o = 1, 64
+          predictions(start + o - 1) = maxloc(fc1_output(:, o), dim=1) - 1
+        end do
 
         if (batch == 1) then
           call assert_close_f(conv1_output(1, 1, 1, 1), 0.1796)
           call assert_close_f(conv1_output(28, 28, 8, 1), 0.6550)
+          call assert_close_f(pool1_padded_output(2, 2, 1, 1), 0.1796)
+          call assert_close_f(pool1_padded_output(15, 15, 8, 1), 0.6550)
+          call assert_close_f(conv2_output(1,1,1,1), 0.4063)
+          call assert_close_f(conv2_output(14, 14, 2, 1), 0.1789)
+          call assert_close_f(conv2_output(1, 1, 14, 1), 0.1906)
+          call assert_close_f(conv2_output(14, 14, 16, 1), 0.0)
+          call assert_close_f(pool2_output(1, 1, 1, 1), 0.4063)
+          call assert_close_f(pool2_output(1, 1, 2, 1), 0.04935)
+          call assert_close_f(pool2_output(7, 7, 2, 1), 0.49008)
+          call assert_close_f(pool2_output(1, 1, 14, 1), 0.1906)
+          call assert_close_f(pool2_output(7, 7, 16, 1), 0.0)
+          call assert_close_f(pool2_output(1, 1, 1, 1), 0.40625)
+          call assert_close_f(pool2_output(2, 1, 1, 1), 0.0)
+          call assert_close_f(pool2_output(2, 2, 1, 1), 6.2347)
+          call assert_close_f(pool2_output(7, 7, 16, 1), 0.0)
+          call assert_close_f(fc1_output(1, 1), -80.9247)
+          call assert_close_f(fc1_output(2, 1), -34.6855)
+          call assert_close_f(fc1_output(3, 1), -31.1533)
+          call assert_close_f(fc1_output(4, 1), -12.5210)
+          call assert_close_f(fc1_output(5, 1), -44.1289)
+          call assert_close_f(fc1_output(6, 1), -40.3522)
+          call assert_close_f(fc1_output(7, 1), -139.7097)
+          call assert_close_f(fc1_output(8, 1), 38.1572)
+          call assert_close_f(fc1_output(9, 1), -47.0220)
+          call assert_close_f(fc1_output(10, 1), -7.9544)
         end if
     end do
+    call system_clock(end_time)
+    call system_clock(count_rate=count_rate)
+
+  ! compare labels and predictions
+    num_correct = 0
+    num_incorrect = 0
+    do r = 1, 10000
+      if (labels(r) == predictions(r)) then
+        num_correct = num_correct + 1
+      else
+        num_incorrect = num_incorrect + 1
+      end if
+    end do 
+    write(*,*) "Got ", num_correct, "/", total_num_images
+    write(*,*) "Duration: ", real(end_time-start_time, kind=real64)/real(count_rate, kind=real64), "s"
+    call assert_equal_int(num_incorrect, 138)
+    call assert_equal_int(num_correct, 9862)
+
+
 contains
 
 !cf. https://stackoverflow.com/a/55376595
