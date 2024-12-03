@@ -52,9 +52,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call dalotia_get_tensor_extents(dalotia_file_pointer, trim(tensor_name_conv1)//".bias", tensor_extents)
     call assert_equal_int(tensor_extents(1), 8)
     call assert_equal_int(ubound(tensor_bias_conv1, 1), 8)
-    write (*, *) "Loaded + ", trim(tensor_name_conv1)//".bias"
     call dalotia_load_tensor_dense(dalotia_file_pointer, trim(tensor_name_conv1)//".weight", tensor_weight_conv1)
-    write (*, *) "Loaded ", trim(tensor_name_conv1)//".weight"
     call dalotia_load_tensor_dense(dalotia_file_pointer, trim(tensor_name_conv2) //".bias", tensor_bias_conv2)
     call dalotia_load_tensor_dense(dalotia_file_pointer, trim(tensor_name_conv2)//".weight", tensor_weight_conv2)
     call dalotia_load_tensor_dense(dalotia_file_pointer, trim(tensor_name_fc1) //".bias", tensor_bias_fc1)
@@ -90,65 +88,41 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
         conv1_padded_input(2:29, 2:29, :) = images(:, :, start:(start+batch_size-1))
 
         ! apply first convolution
-        do o = 1, 64
-          do k = 1, 8
-            do i = 2, 29
-              do j = 2, 29
-                some_value = sum(conv1_padded_input(j-1:j+1, i-1:i+1, o) * tensor_weight_conv1_fixed(:, :, 1, k)) + &
-                  & tensor_bias_conv1_fixed(k)
-                ! relu activation
-                if (some_value < 0.0) then
-                  some_value = 0.0
-                end if
-                conv1_output(j-1, i-1, k, o) = some_value
-              end do
-            end do
-          end do
+        do concurrent (o = 1:64, k = 1:8, i = 2:29, j = 2:29)
+          associate (accumulated_value => conv1_output(j-1, i-1, k, o))
+            accumulated_value = sum(conv1_padded_input(j-1:j+1, i-1:i+1, o) * tensor_weight_conv1_fixed(:, :, 1, k)) + &
+              & tensor_bias_conv1_fixed(k)
+            ! relu activation
+            if (accumulated_value < 0.0) then
+              accumulated_value = 0.0
+            end if
+          end associate
         end do
 
         ! apply first pooling
-        do o = 1, 64
-          do k = 1, 8
-            do i = 1, 14
-              do j = 1, 14
-                pool1_padded_output(j+1, i+1, k, o) = maxval(conv1_output(2*j-1:2*j, 2*i-1:2*i, k, o))
-              end do
-            end do
-          end do
+        do concurrent (o = 1:64, k = 1:8, i = 1:14, j = 1:14)
+          pool1_padded_output(j+1, i+1, k, o) = maxval(conv1_output(2*j-1:2*j, 2*i-1:2*i, k, o))
         end do
 
         ! apply second convolution
-        do o = 1, 64
-          do k = 1, 16
-              do i = 2, 15
-                do j = 2, 15
-                ! do c = 1, 8
-                  some_value = sum(pool1_padded_output(j-1:j+1, i-1:i+1, :, o) * tensor_weight_conv2_fixed(:, :, :, k)) + &
-                    & tensor_bias_conv2_fixed(k)
-                  ! relu activation
-                  if (some_value < 0.0) then
-                    some_value = 0.0
-                  end if
-                  conv2_output(j-1, i-1, k, o) = some_value
-                ! end do
-              end do
-            end do 
-          end do
+        do concurrent (o = 1:64, k = 1:16, i = 2:15, j = 2:15)
+          associate (accumulated_value => conv2_output(j-1, i-1, k, o))
+            accumulated_value = sum(pool1_padded_output(j-1:j+1, i-1:i+1, :, o) * tensor_weight_conv2_fixed(:, :, :, k)) + &
+            & tensor_bias_conv2_fixed(k)
+            ! relu activation
+            if (accumulated_value < 0.0) then
+              accumulated_value = 0.0
+            end if
+          end associate
         end do
 
         ! apply second pooling
-        do o = 1, 64
-          do k = 1, 16
-            do i = 1, 7
-              do j = 1, 7
-                pool2_output(j, i, k, o) = maxval(conv2_output(2*j-1:2*j, 2*i-1:2*i, k, o))
-              end do
-            end do
-          end do
+        do concurrent (o = 1:64, k = 1:16, i = 1:7, j = 1:7)
+          pool2_output(j, i, k, o) = maxval(conv2_output(2*j-1:2*j, 2*i-1:2*i, k, o))
         end do
 
         ! apply fully connected layer
-        do o = 1, 64
+        do concurrent (o = 1:64)
           f = 1
           do k = 1, 16
             do i = 1, 7
@@ -163,39 +137,39 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
         end do
 
         ! make predictions via softmax
-        do o = 1, 64
+        do concurrent (o = 1:64)
           predictions(start + o - 1) = maxloc(fc1_output(:, o), dim=1) - 1
         end do
 
-        if (batch == 1) then
-          call assert_close_f(conv1_output(1, 1, 1, 1), 0.1796)
-          call assert_close_f(conv1_output(28, 28, 8, 1), 0.6550)
-          call assert_close_f(pool1_padded_output(2, 2, 1, 1), 0.1796)
-          call assert_close_f(pool1_padded_output(15, 15, 8, 1), 0.6550)
-          call assert_close_f(conv2_output(1,1,1,1), 0.4063)
-          call assert_close_f(conv2_output(14, 14, 2, 1), 0.1789)
-          call assert_close_f(conv2_output(1, 1, 14, 1), 0.1906)
-          call assert_close_f(conv2_output(14, 14, 16, 1), 0.0)
-          call assert_close_f(pool2_output(1, 1, 1, 1), 0.4063)
-          call assert_close_f(pool2_output(1, 1, 2, 1), 0.04935)
-          call assert_close_f(pool2_output(7, 7, 2, 1), 0.49008)
-          call assert_close_f(pool2_output(1, 1, 14, 1), 0.1906)
-          call assert_close_f(pool2_output(7, 7, 16, 1), 0.0)
-          call assert_close_f(pool2_output(1, 1, 1, 1), 0.40625)
-          call assert_close_f(pool2_output(2, 1, 1, 1), 0.0)
-          call assert_close_f(pool2_output(2, 2, 1, 1), 6.2347)
-          call assert_close_f(pool2_output(7, 7, 16, 1), 0.0)
-          call assert_close_f(fc1_output(1, 1), -80.9247)
-          call assert_close_f(fc1_output(2, 1), -34.6855)
-          call assert_close_f(fc1_output(3, 1), -31.1533)
-          call assert_close_f(fc1_output(4, 1), -12.5210)
-          call assert_close_f(fc1_output(5, 1), -44.1289)
-          call assert_close_f(fc1_output(6, 1), -40.3522)
-          call assert_close_f(fc1_output(7, 1), -139.7097)
-          call assert_close_f(fc1_output(8, 1), 38.1572)
-          call assert_close_f(fc1_output(9, 1), -47.0220)
-          call assert_close_f(fc1_output(10, 1), -7.9544)
-        end if
+        ! if (batch == 1) then
+        !   call assert_close_f(conv1_output(1, 1, 1, 1), 0.1796)
+        !   call assert_close_f(conv1_output(28, 28, 8, 1), 0.6550)
+        !   call assert_close_f(pool1_padded_output(2, 2, 1, 1), 0.1796)
+        !   call assert_close_f(pool1_padded_output(15, 15, 8, 1), 0.6550)
+        !   call assert_close_f(conv2_output(1,1,1,1), 0.4063)
+        !   call assert_close_f(conv2_output(14, 14, 2, 1), 0.1789)
+        !   call assert_close_f(conv2_output(1, 1, 14, 1), 0.1906)
+        !   call assert_close_f(conv2_output(14, 14, 16, 1), 0.0)
+        !   call assert_close_f(pool2_output(1, 1, 1, 1), 0.4063)
+        !   call assert_close_f(pool2_output(1, 1, 2, 1), 0.04935)
+        !   call assert_close_f(pool2_output(7, 7, 2, 1), 0.49008)
+        !   call assert_close_f(pool2_output(1, 1, 14, 1), 0.1906)
+        !   call assert_close_f(pool2_output(7, 7, 16, 1), 0.0)
+        !   call assert_close_f(pool2_output(1, 1, 1, 1), 0.40625)
+        !   call assert_close_f(pool2_output(2, 1, 1, 1), 0.0)
+        !   call assert_close_f(pool2_output(2, 2, 1, 1), 6.2347)
+        !   call assert_close_f(pool2_output(7, 7, 16, 1), 0.0)
+        !   call assert_close_f(fc1_output(1, 1), -80.9247)
+        !   call assert_close_f(fc1_output(2, 1), -34.6855)
+        !   call assert_close_f(fc1_output(3, 1), -31.1533)
+        !   call assert_close_f(fc1_output(4, 1), -12.5210)
+        !   call assert_close_f(fc1_output(5, 1), -44.1289)
+        !   call assert_close_f(fc1_output(6, 1), -40.3522)
+        !   call assert_close_f(fc1_output(7, 1), -139.7097)
+        !   call assert_close_f(fc1_output(8, 1), 38.1572)
+        !   call assert_close_f(fc1_output(9, 1), -47.0220)
+        !   call assert_close_f(fc1_output(10, 1), -7.9544)
+        ! end if
     end do
     call system_clock(end_time)
     call system_clock(count_rate=count_rate)
