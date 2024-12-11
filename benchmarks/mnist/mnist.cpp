@@ -15,7 +15,10 @@
 // #include <multi/adaptors/tblis.hpp>
 #endif  // DALOTIA_E_WITH_BOOST_MULTI
 
-std::pair<std::pmr::vector<float>, std::pmr::vector<float>> test_load(
+#ifdef DALOTIA_E_WITH_LIBTORCH
+#include <torch/script.h>
+#endif  // DALOTIA_E_WITH_LIBTORCH
+
     std::string filename, std::string layer_name) {
     std::string tensor_name_weight = layer_name + ".weight";
     std::string tensor_name_bias = layer_name + ".bias";
@@ -722,6 +725,46 @@ void run_inference_boost_multi(std::string filename) {
 }
 #endif  // DALOTIA_E_WITH_BOOST_MULTI
 
+#ifdef DALOTIA_E_WITH_LIBTORCH
+std::chrono::duration<double> run_inference_libtorch(
+    const dalotia::vector<float> &conv1_weight,
+    const dalotia::vector<float> &conv1_bias,
+    const std::array<int, 4> &conv1_weight_extents,
+    const dalotia::vector<float> &conv2_weight,
+    const dalotia::vector<float> &conv2_bias,
+    const std::array<int, 4> &conv2_weight_extents,
+    const dalotia::vector<float> &fc1_weight,
+    const dalotia::vector<float> &fc1_bias,
+    const std::array<int, 2> &fc1_weight_extents,
+    const dalotia::vector<float> &images, const dalotia::vector<float> &labels,
+    dalotia::vector<int> &results) {
+    constexpr size_t batch_size = 64;
+
+    torch::jit::script::Module module = torch::jit::load("mnist_fugaku.pt");
+    // https://pytorch.org/cppdocs/api/function_namespacetorch_1_1jit_1a68b22ff064eaee414e83674ce412130f.html
+    // Module torch::jit::optimize_for_inference(Module &module, const std::vector<std::string> &other_methods = {})
+
+    // minibatching
+    const auto total_num_images = labels.size();
+    const auto num_batches = static_cast<int>(
+        std::ceil(total_num_images / static_cast<float>(batch_size)));
+
+    const auto start = std::chrono::high_resolution_clock::now();
+    for (size_t batch_index = 0; batch_index < num_batches; ++batch_index) {
+        auto num_images_in_batch =
+            std::min(batch_size, total_num_images - batch_index * batch_size);
+        auto inum_images_in_batch = static_cast<int>(num_images_in_batch);
+        assert(inum_images_in_batch > 0);
+        std::cout << "batch index: " << batch_index << " / " << num_batches
+                  << " num images in batch: " << num_images_in_batch
+                  << std::endl;
+        auto input_tensor = torch::from_blob(
+            reinterpret_cast<void*>(const_cast<float*>(images.data()) + (batch_index * batch_size * 28 * 28)), {64, 1, 28, 28});
+        torch::Tensor out_tensor = module.forward({input_tensor}).toTensor();
+    }
+}
+#endif  // DALOTIA_E_WITH_LIBTORCH
+
 int main(int, char **) {
     // the model used here is generated as in
     // https://medium.com/@myringoleMLGOD/simple-convolutional-neural-network-cnn-for-dummies-in-pytorch-a-step-by-step-guide-6f4109f6df80
@@ -777,6 +820,11 @@ int main(int, char **) {
 #else
     std::cout << "NDIRECT not enabled" << std::endl;
 #endif  // DALOTIA_E_WITH_NDIRECT
+#ifdef DALOTIA_E_WITH_LIBTORCH
+    inference_functions.push_back(run_inference_libtorch);
+#else
+    std::cout << "LIBTORCH not enabled" << std::endl;
+#endif  // DALOTIA_E_WITH_LIBTORCH
 
     std::reverse(inference_functions.begin(), inference_functions.end());
 

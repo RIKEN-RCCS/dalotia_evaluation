@@ -15,6 +15,10 @@ if (DALOTIA_E_WITH_NDIRECT)
     target_link_libraries( mnist_cpp PRIVATE ${NDIRECT_CPP_LIBRARY_DIR}/libnd.a )
     add_dependencies( mnist_cpp ndirect )
 endif(DALOTIA_E_WITH_NDIRECT)
+if (DALOTIA_E_WITH_LIBTORCH)
+    target_compile_options( mnist_cpp PUBLIC "-DDALOTIA_E_WITH_LIBTORCH")
+    add_dependencies( mnist_cpp torch )
+endif(DALOTIA_E_WITH_LIBTORCH)
 
 if (OpenMP_CXX_FOUND)
   target_link_libraries(mnist_cpp PUBLIC OpenMP::OpenMP_CXX)
@@ -22,11 +26,9 @@ endif ()
 # add_test( mnist_cpp mnist_cpp ) #TODO
 
 if (DALOTIA_E_WITH_FORTRAN)
-    add_executable( mnist_fortran mnist.f03 ) #TODO this does not put the executable in the compile / link line??? -> try newer cmake maybe?
+    add_executable( mnist_fortran mnist.f03 ) #TODO this does not put the executable in the compile / link line??? -> newer cmake works
     # add sources
-    # target_include_directories( mnist_fortran PUBLIC ${CMAKE_Fortran_MODULE_DIRECTORY})
     target_include_directories( mnist_fortran PUBLIC $<TARGET_PROPERTY:dalotia_fortran,Fortran_MODULE_DIRECTORY>)
-    # set_target_properties(mnist_fortran PROPERTIES LANGUAGE Fortran)
     set_target_properties(mnist_fortran PROPERTIES LINKER_LANGUAGE Fortran)
     target_link_libraries( mnist_fortran dalotia_fortran )
 endif (DALOTIA_E_WITH_FORTRAN)
