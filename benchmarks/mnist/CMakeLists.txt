@@ -17,6 +17,7 @@ if (DALOTIA_E_WITH_NDIRECT)
 endif(DALOTIA_E_WITH_NDIRECT)
 if (DALOTIA_E_WITH_LIBTORCH)
     target_compile_options( mnist_cpp PUBLIC "-DDALOTIA_E_WITH_LIBTORCH")
+    target_link_libraries(mnist_cpp PRIVATE "${TORCH_LIBRARIES}")
     add_dependencies( mnist_cpp torch )
 endif(DALOTIA_E_WITH_LIBTORCH)
 
@@ -66,3 +67,4 @@ download_and_extract_gz(data_mnist_test_labels https://ossci-datasets.s3.amazona
 download_and_extract_gz(data_mnist_test_images https://ossci-datasets.s3.amazonaws.com/mnist/t10k-images-idx3-ubyte.gz 8d422c7b0a1c1c79245a5bcf07fe86e33eeafee792b84584aec276f5a2dbc4e6)
 
 file(COPY ${DALOTIA_CPP_INCLUDE_DIR}/data/model-mnist.safetensors DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/mnist_fugaku.pt DESTINATION ${CMAKE_CURRENT_BINARY_DIR})

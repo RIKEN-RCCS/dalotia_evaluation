@@ -33,7 +33,7 @@ num_classes = 10  # digits 0-9
 batch_size = 64
 
 model = CNN(in_channels=1, num_classes=num_classes).to(device)
-[missing, unexpected] = load_model(model, "benchmarks/mnist/model-mnist.safetensors")
+[missing, unexpected] = load_model(model, "./model-mnist.safetensors")
 model.eval()  # Set the model to evaluation mode
 
 sample_input = torch.rand(batch_size,1,28, 28)

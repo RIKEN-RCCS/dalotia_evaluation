@@ -62,62 +62,58 @@ if (DALOTIA_E_WITH_NDIRECT)
 endif (DALOTIA_E_WITH_NDIRECT)
 
 if (DALOTIA_E_WITH_LIBTORCH)
-  # beware: this can take half a day to download and compile
-  set(FETCHCONTENT_QUIET FALSE)
-  set(pytorch_patch git apply ${CMAKE_CURRENT_SOURCE_DIR}/cmake/pytorch_cmake_no_force_cache.patch)
-  #cf. https://github.com/pytorch/pytorch/tree/v2.5.1/third_party
-  FetchContent_Declare(
-    libtorch
-    PATCH_COMMAND ${pytorch_patch}
-    UPDATE_DISCONNECTED 1
-    GIT_REPOSITORY "https://github.com/pytorch/pytorch"
-    GIT_TAG "v2.5.1"
-    GIT_SUBMODULES third_party/FP16 third_party/FXdiv third_party/NNPACK third_party/NVTX third_party/XNNPACK third_party/cpuinfo third_party/cutlass third_party/eigen third_party/flatbuffers third_party/fmt third_party/ideep third_party/nlohmann third_party/onnx third_party/pocketfft third_party/protobuf third_party/psimd third_party/pthreadpool third_party/tensorpipe third_party/sleef
-    FIND_PACKAGE_ARGS
-  )
-  # cf. https://github.com/pytorch/pytorch/blob/v2.5.1/cmake/Dependencies.cmake
-  set(BUILD_BINARY ON)
-  set(BUILD_CAFFE2 OFF)
-  set(BUILD_SHARED_LIBS OFF)
-  set(BUILD_PYTHON OFF)
-  set(BUILD_TEST OFF)
-  set(BUILD_MOBILE_BENCHMARK OFF)
-  set(BUILD_MOBILE_TEST OFF)
-  set(USE_NATIVE_ARCH ON)
-  # cf. https://github.com/fujitsu/pytorch/blob/cf86c94a480b0e9bb038b7eccc646983fa6f5980/scripts/fujitsu/5_pytorch.sh#L131C25-L133C26
-  set(USE_MKLDNN ON)
-  set(USE_MKLDNN_CBLAS ON)
-  set(USE_DISTRIBUTED OFF)
-  set(USE_KINETO OFF)
-  set(USE_ROCM OFF)
-  set(USE_NCCL OFF)
-  set(USE_MPI OFF)
-  set(USE_CUDA OFF) #TODO maybe set on for GPU comparison
-  set(USE_CUDNN OFF) #TODO maybe set on for GPU comparison
-  set(USE_GLOO OFF) #TODO maybe set on for GPU comparison
-  set(USE_MAGMA OFF) #TODO maybe set on for GPU comparison
-  set(USE_PROF OFF)
-  set(USE_XPU OFF)
-  set(USE_VULKAN OFF)
-  set(USE_SOURCE_DEBUG_ON_MOBILE OFF)
-  set(USE_ASAN OFF)
-  set(USE_TSAN OFF)
-  set(USE_FBGEMM OFF)
-  set(USE_FAKELOWP OFF)
-  set(USE_NNPACK OFF) #??
-  # set(USE_PYTORCH_QNNPACK OFF)
-  # set(USE_XNNPACK OFF)
-  # set(BLAS_INFO "open")
-  # set(WITH_BLAS "open")
-  set(USE_NUMA OFF) #???
-  # needs loaded: python@3.8.0: py-pyyaml, py-typing-extensions
-  FetchContent_MakeAvailable(libtorch)
-  message(STATUS "libtorch_SOURCE_DIR: ${libtorch_SOURCE_DIR}")
-  message(STATUS "CAFFE2_CMAKE_BUILDING_WITH_MAIN_REPO: ${CAFFE2_CMAKE_BUILDING_WITH_MAIN_REPO}")
-  set(LIBTORCH_INCLUDE_DIRS ${libtorch_SOURCE_DIR}/include)
-  set(LIBTORCH_LIBRARY_PATH ${libtorch_SOURCE_DIR}/lib)
-
-  # find_package(Torch REQUIRED)
+  # # beware: this can take half a day to download and compile
+  # set(FETCHCONTENT_QUIET FALSE)
+  # set(pytorch_patch git apply ${CMAKE_CURRENT_SOURCE_DIR}/cmake/pytorch_cmake_no_force_cache.patch)
+  # #cf. https://github.com/pytorch/pytorch/tree/v2.5.1/third_party
+  # FetchContent_Declare(
+  #   libtorch
+  #   PATCH_COMMAND ${pytorch_patch}
+  #   UPDATE_DISCONNECTED 1
+  #   GIT_REPOSITORY "https://github.com/pytorch/pytorch"
+  #   GIT_TAG "v2.5.1"
+  #   GIT_SUBMODULES third_party/FP16 third_party/FXdiv third_party/NNPACK third_party/NVTX third_party/XNNPACK third_party/cpuinfo third_party/cutlass third_party/eigen third_party/flatbuffers third_party/fmt third_party/ideep third_party/nlohmann third_party/onnx third_party/pocketfft third_party/protobuf third_party/psimd third_party/pthreadpool third_party/tensorpipe third_party/sleef
+  #   FIND_PACKAGE_ARGS
+  # )
+  # # cf. https://github.com/pytorch/pytorch/blob/v2.5.1/cmake/Dependencies.cmake
+  # set(BUILD_BINARY ON)
+  # set(BUILD_CAFFE2 OFF)
+  # set(BUILD_SHARED_LIBS OFF)
+  # set(BUILD_PYTHON OFF)
+  # set(BUILD_TEST OFF)
+  # set(BUILD_MOBILE_BENCHMARK OFF)
+  # set(BUILD_MOBILE_TEST OFF)
+  # set(USE_NATIVE_ARCH ON)
+  # # cf. https://github.com/fujitsu/pytorch/blob/cf86c94a480b0e9bb038b7eccc646983fa6f5980/scripts/fujitsu/5_pytorch.sh#L131C25-L133C26
+  # set(USE_MKLDNN ON)
+  # set(USE_MKLDNN_CBLAS ON)
+  # set(USE_DISTRIBUTED OFF)
+  # set(USE_KINETO OFF)
+  # set(USE_ROCM OFF)
+  # set(USE_NCCL OFF)
+  # set(USE_MPI OFF)
+  # set(USE_CUDA OFF) #TODO maybe set on for GPU comparison
+  # set(USE_CUDNN OFF) #TODO maybe set on for GPU comparison
+  # set(USE_GLOO OFF) #TODO maybe set on for GPU comparison
+  # set(USE_MAGMA OFF) #TODO maybe set on for GPU comparison
+  # set(USE_PROF OFF)
+  # set(USE_XPU OFF)
+  # set(USE_VULKAN OFF)
+  # set(USE_SOURCE_DEBUG_ON_MOBILE OFF)
+  # set(USE_ASAN OFF)
+  # set(USE_TSAN OFF)
+  # set(USE_FBGEMM OFF)
+  # set(USE_FAKELOWP OFF)
+  # set(USE_NNPACK OFF) #??
+  # # set(USE_PYTORCH_QNNPACK OFF)
+  # # set(USE_XNNPACK OFF)
+  # # set(BLAS_INFO "open")
+  # # set(WITH_BLAS "open")
+  # set(USE_NUMA OFF) #???
+  # # needs loaded: python@3.8.0: py-pyyaml, py-typing-extensions
+  # FetchContent_MakeAvailable(libtorch)
+  find_package (Torch PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../pytorch NO_DEFAULT_PATH)
+  find_package(Torch REQUIRED)
   set(BUILD_SHARED_LIBS OFF)
 endif(DALOTIA_E_WITH_LIBTORCH)
 

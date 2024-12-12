@@ -201,19 +201,6 @@ std::chrono::duration<double> run_inference_slow_loops(
         std::cout << "batch index: " << batch_index << " / " << num_batches
                   << " num images in batch: " << num_images_in_batch
                   << std::endl;
-        // zero all vector data structures
-        // std::memset(
-        //     image_vector_padded.data(), 0,
-        //     image_vector_padded.size() * sizeof(float));
-        std::memset(conv1_output.data(), 0,
-                    conv1_output.size() * sizeof(float));
-        std::memset(conv1_padded_output_pooled.data(), 0,
-                    conv1_padded_output_pooled.size() * sizeof(float));
-        std::memset(conv2_output.data(), 0,
-                    conv2_output.size() * sizeof(float));
-        std::memset(conv2_output_pooled.data(), 0,
-                    conv2_output_pooled.size() * sizeof(float));
-        std::memset(fc1_output.data(), 0, fc1_output.size() * sizeof(float));
 
         // apply first convolution
         // copy data to larger array for zero-padding at the edges
@@ -741,8 +728,7 @@ std::chrono::duration<double> run_inference_libtorch(
     constexpr size_t batch_size = 64;
 
     torch::jit::script::Module module = torch::jit::load("mnist_fugaku.pt");
-    // https://pytorch.org/cppdocs/api/function_namespacetorch_1_1jit_1a68b22ff064eaee414e83674ce412130f.html
-    // Module torch::jit::optimize_for_inference(Module &module, const std::vector<std::string> &other_methods = {})
+    module = torch::jit::optimize_for_inference(module);
 
     // minibatching
     const auto total_num_images = labels.size();
@@ -751,19 +737,21 @@ std::chrono::duration<double> run_inference_libtorch(
 
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t batch_index = 0; batch_index < num_batches; ++batch_index) {
-        auto num_images_in_batch =
-            std::min(batch_size, total_num_images - batch_index * batch_size);
-        auto inum_images_in_batch = static_cast<int>(num_images_in_batch);
-        assert(inum_images_in_batch > 0);
-        std::cout << "batch index: " << batch_index << " / " << num_batches
-                  << " num images in batch: " << num_images_in_batch
-                  << std::endl;
         auto input_tensor = torch::from_blob(
             reinterpret_cast<void*>(const_cast<float*>(images.data()) + (batch_index * batch_size * 28 * 28)), {64, 1, 28, 28});
         torch::Tensor out_tensor = module.forward({input_tensor}).toTensor();
+        // softmax to get the result
+        auto max_result = out_tensor.argmax(1);
+        auto num_images_in_batch =
+            std::min(batch_size, total_num_images - batch_index * batch_size);
+        for (int i = 0; i < num_images_in_batch; ++i) {
+            results[batch_index * batch_size + i] = max_result[i].item<int>();
+        }
     }
+    return std::chrono::high_resolution_clock::now() - start;
 }
 #endif  // DALOTIA_E_WITH_LIBTORCH
+
 
 int main(int, char **) {
     // the model used here is generated as in
@@ -845,7 +833,9 @@ int main(int, char **) {
             }
         }
         assert(num_correct + num_incorrect == total_num_images);
-        assert(num_correct == 9862);
+        if (num_correct != 9862) {
+            throw std::runtime_error("num_correct != 9862");
+        }
         std::cout << "Got " << num_correct << "/" << total_num_images
                   << std::endl;
         std::cout << "Duration: " << duration.count() << "s" << std::endl;
