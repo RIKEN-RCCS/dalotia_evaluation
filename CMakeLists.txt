@@ -21,7 +21,7 @@ include(ExternalProject)
 include(FetchContent)
 FetchContent_Declare(
   dalotia
-  GIT_REPOSITORY git@github.com:RIKEN-RCCS/dalotia.git #TODO replace w/ https
+  GIT_REPOSITORY https://github.com/RIKEN-RCCS/dalotia.git #TODO replace w/ https
   GIT_TAG main # TODO replace with release tag
   # CMAKE_ARGS  # I believe these are ignored, set like below
   #       -D DALOTIA_BUILD_TESTS=ON
@@ -32,6 +32,12 @@ FetchContent_MakeAvailable(dalotia)
 FetchContent_GetProperties(dalotia SOURCE_DIR DALOTIA_CPP_INCLUDE_DIR BINARY_DIR DALOTIA_CPP_LIBRARY)
 message(STATUS "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
 message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
+if(DALOTIA_E_WITH_LIBTORCH)
+  # the default pip-downloaded libtorch is built with CXX11_ABI=0 -> to use it everything else needs that too
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=0")
+  target_compile_definitions(dalotia_cpp PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
+  target_compile_definitions(safetensors_cpp PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
+endif(DALOTIA_E_WITH_LIBTORCH)
 
 set(BLA_STATIC ON)
 set(BLA_VENDOR "OpenBLAS") # or: Fujitsu_SSL2...
