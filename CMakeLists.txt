@@ -34,10 +34,14 @@ message(STATUS "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
 message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
 if(DALOTIA_E_WITH_LIBTORCH)
   # the default pip-downloaded libtorch is built with CXX11_ABI=0 -> to use it everything else needs that too
+  set(DALOTIA_E_USE_OLD_ABI ON)
+endif(DALOTIA_E_WITH_LIBTORCH)
+
+if (DALOTIA_E_USE_OLD_ABI)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=0")
   target_compile_definitions(dalotia_cpp PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
   target_compile_definitions(safetensors_cpp PUBLIC _GLIBCXX_USE_CXX11_ABI=0)
-endif(DALOTIA_E_WITH_LIBTORCH)
+endif (DALOTIA_E_USE_OLD_ABI)
 
 set(BLA_STATIC ON)
 set(BLA_VENDOR "OpenBLAS") # or: Fujitsu_SSL2...

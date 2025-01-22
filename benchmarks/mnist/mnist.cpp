@@ -15,10 +15,16 @@
 // #include <multi/adaptors/tblis.hpp>
 #endif  // DALOTIA_E_WITH_BOOST_MULTI
 
+#ifdef DALOTIA_E_WITH_NDIRECT
+#include <NDIRECT_direct.h>
+#endif  // DALOTIA_E_WITH_NDIRECT
+
 #ifdef DALOTIA_E_WITH_LIBTORCH
 #include <torch/script.h>
 #endif  // DALOTIA_E_WITH_LIBTORCH
 
+
+std::pair<dalotia::vector<float>, dalotia::vector<float>> test_load(
     std::string filename, std::string layer_name) {
     std::string tensor_name_weight = layer_name + ".weight";
     std::string tensor_name_bias = layer_name + ".bias";
@@ -95,8 +101,13 @@ template <int dim>
 std::function<int(std::array<int, dim>)> get_tensor_indexer(
     const std::array<int, dim> &extents) {
     std::array<int, dim> strides;
-    std::exclusive_scan(extents.rbegin(), extents.rend(), strides.rbegin(), 1,
-                        std::multiplies<int>());
+    // std::exclusive_scan(extents.rbegin(), extents.rend(), strides.rbegin(), 1,
+    //                     std::multiplies<int>());
+    strides[0] = 1; //TODO make depend on C++ version?
+    for (size_t i = 1; i < strides.size(); ++i) {
+        strides[i] = strides[i-1] * extents[i-1];
+    }
+
     const std::array<int, dim> const_strides = strides;
     return [const_strides, &extents](std::array<int, dim> indices) {
 #ifndef NDEBUG
