@@ -8,8 +8,14 @@
 
 #include "dalotia.hpp"
 #include "dalotia_safetensors_file.hpp"
-#ifdef DALOTIA_E_WITH_BOOST_MULTI
+
+// for cblas_sgemm:
+#include "cblas.h"
+
+// Kokkos mdspan?
 // #include "mdspan/mdspan.hpp"
+
+#ifdef DALOTIA_E_WITH_BOOST_MULTI
 #include <boost/multi/array.hpp>
 #include <multi/adaptors/blas.hpp>
 // #include <multi/adaptors/tblis.hpp>
@@ -101,11 +107,12 @@ template <int dim>
 std::function<int(std::array<int, dim>)> get_tensor_indexer(
     const std::array<int, dim> &extents) {
     std::array<int, dim> strides;
-    // std::exclusive_scan(extents.rbegin(), extents.rend(), strides.rbegin(), 1,
+    // std::exclusive_scan(extents.rbegin(), extents.rend(), strides.rbegin(),
+    // 1,
     //                     std::multiplies<int>());
-    strides[0] = 1; //TODO make depend on C++ version?
-    for (size_t i = 1; i < strides.size(); ++i) {
-        strides[i] = strides[i-1] * extents[i-1];
+    strides.back() = 1;  // TODO detect if exclusive_scan is available?
+    for (size_t i = dim - 1; i > 0; --i) {
+        strides[i -1] = strides[i] * extents[i];
     }
 
     const std::array<int, dim> const_strides = strides;
@@ -330,19 +337,24 @@ std::chrono::duration<double> run_inference_slow_loops(
         }
 
         // apply dense layer
+
         for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int k = 0; k < 10; ++k) {
-                float value = 0.;
-                for (int l = 0; l < 16 * 7 * 7; ++l) {
-                    value +=
-                        fc1_weight[fc1_weight_indexer({k, l})] *
-                        conv2_output_pooled[conv2_output_flat_indexer({o, l})];
-                }
-                value += fc1_bias[k];
-                fc1_output[fc1_output_indexer({o, k})] = value;
+                // fill with bias
+                fc1_output[fc1_output_indexer({o, k})] = fc1_bias[k];
             }
         }
-
+        // sgemm (transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+        // -> A = conv2_output_pooled (64*784), B = fc1_weight (10*784), 
+        //    C = fc1_output(64*10)
+        int sgemm_m = inum_images_in_batch, sgemm_n = 10, sgemm_k = 784, 
+            sgemm_lda = sgemm_k, sgemm_ldb = sgemm_k, sgemm_ldc = sgemm_n;
+        float sgemm_alpha = 1.0, sgemm_beta = 1.0;
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, sgemm_m, sgemm_n, 
+                    sgemm_k, sgemm_alpha, conv2_output_pooled.data(), sgemm_lda, 
+                    fc1_weight.data(), sgemm_ldb, sgemm_beta, fc1_output.data(), 
+                    sgemm_ldc);
+        
         // apply softmax and compare to labels
         for (int o = 0; o < inum_images_in_batch; ++o) {
             auto result = std::max_element(fc1_output.begin() + o * 10,
@@ -806,28 +818,29 @@ int main(int, char **) {
         const dalotia::vector<float> &images,
         const dalotia::vector<float> &labels, dalotia::vector<int> &results)>
         inference_function;
-    std::vector<inference_function> inference_functions = {
-        run_inference_slow_loops};
+    std::unordered_map<std::string, inference_function> inference_functions;
 
 #ifdef DALOTIA_E_WITH_BOOST_MULTI
-    inference_functions.push_back(run_inference_boost_multi);
+    inference_functions["boost_multy"] = run_inference_boost_multi;
 #else
     std::cout << "BOOST_MULTI not enabled" << std::endl;
 #endif  // DALOTIA_E_WITH_BOOST_MULTI
-#ifdef DALOTIA_E_WITH_NDIRECT
-    inference_functions.push_back(run_inference_ndirect);
-#else
-    std::cout << "NDIRECT not enabled" << std::endl;
-#endif  // DALOTIA_E_WITH_NDIRECT
+// #ifdef DALOTIA_E_WITH_NDIRECT
+//     inference_functions["ndirect"] = run_inference_ndirect;
+// #else
+//     std::cout << "NDIRECT not enabled" << std::endl;
+// #endif  // DALOTIA_E_WITH_NDIRECT
 #ifdef DALOTIA_E_WITH_LIBTORCH
-    inference_functions.push_back(run_inference_libtorch);
+    inference_functions["libtorch"] = run_inference_libtorch;
 #else
     std::cout << "LIBTORCH not enabled" << std::endl;
 #endif  // DALOTIA_E_WITH_LIBTORCH
 
-    std::reverse(inference_functions.begin(), inference_functions.end());
+    inference_functions["slow_loops"] = run_inference_slow_loops;
 
-    for (const auto &inference_function : inference_functions) {
+    for (const auto &inference_function_pair : inference_functions) {
+        const auto& inference_function = inference_function_pair.second;
+        std::cout << "Running inference with " << inference_function_pair.first << std::endl;
         std::memset(results.data(), 0, results.size() * sizeof(int));
 
         const auto duration = inference_function(

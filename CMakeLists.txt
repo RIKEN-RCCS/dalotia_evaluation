@@ -25,13 +25,15 @@ FetchContent_Declare(
   GIT_TAG main # TODO replace with release tag
   # CMAKE_ARGS  # I believe these are ignored, set like below
   #       -D DALOTIA_BUILD_TESTS=ON
-  FIND_PACKAGE_ARGS
+  # FIND_PACKAGE_ARGS
+  OVERRIDE_FIND_PACKAGE
 )
 set(DALOTIA_BUILD_TESTS OFF)
 FetchContent_MakeAvailable(dalotia)
 FetchContent_GetProperties(dalotia SOURCE_DIR DALOTIA_CPP_INCLUDE_DIR BINARY_DIR DALOTIA_CPP_LIBRARY)
 message(STATUS "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
 message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
+find_package(dalotia)
 if(DALOTIA_E_WITH_LIBTORCH)
   # the default pip-downloaded libtorch is built with CXX11_ABI=0 -> to use it everything else needs that too
   set(DALOTIA_E_USE_OLD_ABI ON)
@@ -51,6 +53,19 @@ if (NOT BLAS_FOUND)
   unset(BLA_VENDOR)
   find_package(BLAS REQUIRED)
 endif (NOT BLAS_FOUND)
+
+if (NOT BLAS_INCLUDE_DIRS OR BLAS_INCLUDE_DIRS STREQUAL "")
+  # list with blas libraries but get their parent directory
+  SET(BLAS_LIBRARIES_PARENTS "")
+   FOREACH(l BLAS_LIBRARIES)
+      cmake_path(GET ${l} PARENT_PATH p)
+      LIST(APPEND BLAS_LIBRARIES_PARENTS "${p}/..") #include?
+   ENDFOREACH(l)
+  message(WARNING "PARENTS ${BLAS_LIBRARIES_PARENTS}")
+  find_path(BLAS_INCLUDE_DIRS cblas.h
+  BLAS_LIBRARIES_PARENTS)
+  message(WARNING "BLAS_INCLUDE_DIRS ${BLAS_INCLUDE_DIRS}")
+endif()
 
 # optional / conditional dependencies
 if (DALOTIA_E_WITH_NDIRECT)

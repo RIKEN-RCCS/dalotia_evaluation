@@ -1,7 +1,7 @@
 add_executable( mnist_cpp mnist.cpp )
 target_link_libraries( mnist_cpp PUBLIC dalotia_cpp )
 # use openblas header
-target_include_directories( mnist_cpp PUBLIC ${OpenBLAS_INCLUDE_DIR})
+target_include_directories( mnist_cpp PUBLIC ${BLAS_INCLUDE_DIRS})
 target_link_libraries(mnist_cpp PRIVATE BLAS::BLAS)
 if (DALOTIA_E_WITH_BOOST_MULTI)
     target_compile_options( mnist_cpp PUBLIC "-DDALOTIA_E_WITH_BOOST_MULTI")
