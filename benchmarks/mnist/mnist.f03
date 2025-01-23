@@ -121,20 +121,17 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
           pool2_output(j, i, k, o) = maxval(conv2_output(2*j-1:2*j, 2*i-1:2*i, k, o))
         end do
 
-        ! apply fully connected layer
+        ! ! apply fully connected layer
         do concurrent (o = 1:64)
-          f = 1
-          do k = 1, 16
-            do i = 1, 7
-              do j = 1, 7
-                fc1_output(:, o) = fc1_output(:, o) + pool2_output(j, i, k, o) * tensor_weight_fc1_fixed(f, :)
-                f = f + 1
-              end do
-            end do
-          end do
-          ! call assert_equal_int(f, 785)
-          fc1_output(:, o) = fc1_output(:, o) + tensor_bias_fc1_fixed(:)
+          ! fill with bias
+          fc1_output(:, o) = tensor_bias_fc1_fixed(:)
         end do
+        ! sgemm (transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
+        !       'T',       'N',  10,64,784,1.0,     784,    784  1.0,     10
+        ! -> A = tensor_weight_fc1_fixed (784*10), B = pool2_output (784*64), 
+        !    C = fc1_output(10*64)
+        call sgemm('T', 'N', 10, 64, 784, 1.0, tensor_weight_fc1_fixed, 784, &
+              pool2_output, 784,  1.0, fc1_output, 10)
 
         ! make predictions via softmax
         do concurrent (o = 1:64)

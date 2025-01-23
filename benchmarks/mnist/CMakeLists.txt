@@ -31,7 +31,8 @@ if (DALOTIA_E_WITH_FORTRAN)
     # add sources
     target_include_directories( mnist_fortran PUBLIC $<TARGET_PROPERTY:dalotia_fortran,Fortran_MODULE_DIRECTORY>)
     set_target_properties(mnist_fortran PROPERTIES LINKER_LANGUAGE Fortran)
-    target_link_libraries( mnist_fortran dalotia_fortran )
+    target_link_libraries(mnist_fortran PRIVATE BLAS::BLAS)
+    target_link_libraries( mnist_fortran PUBLIC dalotia_fortran )
 endif (DALOTIA_E_WITH_FORTRAN)
 
 # download the mnist test data
