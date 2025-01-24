@@ -61,10 +61,8 @@ if (NOT BLAS_INCLUDE_DIRS OR BLAS_INCLUDE_DIRS STREQUAL "")
       cmake_path(GET ${l} PARENT_PATH p)
       LIST(APPEND BLAS_LIBRARIES_PARENTS "${p}/..") #include?
    ENDFOREACH(l)
-  message(WARNING "PARENTS ${BLAS_LIBRARIES_PARENTS}")
   find_path(BLAS_INCLUDE_DIRS cblas.h
   BLAS_LIBRARIES_PARENTS)
-  message(WARNING "BLAS_INCLUDE_DIRS ${BLAS_INCLUDE_DIRS}")
 endif()
 
 # optional / conditional dependencies

@@ -81,11 +81,8 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
         start = (batch - 1) * batch_size + 1
         finish = min(10000, batch * batch_size)
 
-        !zero intermediate arrays?
-        fc1_output = 0.0
-
         ! copy images to a larger array for padding at the edges
-        conv1_padded_input(2:29, 2:29, :) = images(:, :, start:(start+batch_size-1))
+        conv1_padded_input(2:29, 2:29, 1:(finish-start+1)) = images(:, :, start:finish)
 
         ! apply first convolution
         do concurrent (o = 1:64, k = 1:8, i = 2:29, j = 2:29)
