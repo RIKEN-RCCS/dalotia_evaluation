@@ -1,0 +1,19 @@
+add_executable( deeprleddy_cpp deeprleddy.cpp )
+target_link_libraries( deeprleddy_cpp PUBLIC dalotia_cpp )
+# use openblas header
+target_include_directories( deeprleddy_cpp PUBLIC ${BLAS_INCLUDE_DIRS})
+target_link_libraries(deeprleddy_cpp PRIVATE BLAS::BLAS)
+
+if (DALOTIA_E_WITH_LIBTORCH)
+    target_compile_options( deeprleddy_cpp PUBLIC "-DDALOTIA_E_WITH_LIBTORCH")
+    target_link_libraries(deeprleddy_cpp PRIVATE "${TORCH_LIBRARIES}")
+    add_dependencies( deeprleddy_cpp torch )
+endif(DALOTIA_E_WITH_LIBTORCH)
+
+if (OpenMP_CXX_FOUND)
+  target_link_libraries(deeprleddy_cpp PUBLIC OpenMP::OpenMP_CXX)
+endif ()
+# add_test( deeprleddy_cpp deeprleddy_cpp ) #TODO
+
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/weights_DeepRLEddyNet.safetensors DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/traced_DeepRLEddyNet.pt DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
