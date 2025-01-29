@@ -15,5 +15,7 @@ if (OpenMP_CXX_FOUND)
 endif ()
 # add_test( deeprleddy_cpp deeprleddy_cpp ) #TODO
 
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/input_DeepRLEddyNet.safetensors DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/output_DeepRLEddyNet.safetensors DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/weights_DeepRLEddyNet.safetensors DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/traced_DeepRLEddyNet.pt DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
