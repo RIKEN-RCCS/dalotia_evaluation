@@ -1,0 +1,23 @@
+name: Build Project
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  test-project:
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+        # compiler: [gcc, clang]
+    name: Dalotia Evaluation Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4.2.0
+
+    - name: Configure and Build Project
+      uses: threeal/cmake-action@v1.3.0
+      with:
+        run-build: true
+        build-args: --config ${{ matrix.build_type }}
+        # cxx-compiler: ${{ matrix.compiler }}
+        build-dir: build-${{ matrix.build_type }}

@@ -2,9 +2,9 @@ cmake_minimum_required(VERSION 3.24)
 
 project(dalotia_evaluation)
 
-option(DALOTIA_E_WITH_BOOST_MULTI "include boost::multi for tensor operations" ON)
-option(DALOTIA_E_WITH_NDIRECT "include ndirect for convolution operations on ARM" ON)
-option(DALOTIA_E_WITH_LIBTORCH "include libtorch for jitted tensor operations" ON)
+option(DALOTIA_E_WITH_BOOST_MULTI "include boost::multi for tensor operations" OFF)
+option(DALOTIA_E_WITH_NDIRECT "include ndirect for convolution operations on ARM" OFF)
+option(DALOTIA_E_WITH_LIBTORCH "include libtorch for jitted tensor operations" OFF)
 option(DALOTIA_E_WITH_FORTRAN "Build Fortran interface" ON)
 if (DALOTIA_E_WITH_FORTRAN)
     enable_language(Fortran)
