@@ -31,12 +31,17 @@ std::tuple<dalotia::vector<int>, dalotia::vector<float>, dalotia::vector<int>, d
     return {extents_weight, tensor_weight_cpp, extents_bias, tensor_bias_cpp};
 }
 
+bool is_close(float a, float b, float tol = 1e-4) {
+    return std::abs(a - b) < tol;
+}
+
 void assert_close(float a, float b, float tol = 1e-4) {
 #ifndef NDEBUG
-    if (std::abs(a - b) >= tol) {
+    auto is_close_result = is_close(a, b, tol);
+    if (!is_close_result) {
         std::cerr << "assertion failed: " << a << " != " << b << std::endl;
     }
-    assert(std::abs(a - b) < tol);
+    assert(is_close_result);
 #endif  // NDEBUG
 }
 
@@ -55,6 +60,7 @@ std::function<int(std::array<int, dim>)> get_tensor_indexer(
     const std::array<int, dim> const_strides = strides;
     return [const_strides, &extents](std::array<int, dim> indices) {
 #ifndef NDEBUG
+#warning "asserts are enabled -- takes almost forever!"
         for (int i = 0; i < dim; ++i) {
             if (indices[i] < 0 || indices[i] >= extents[i]) {
                 for (const auto &index : indices) {
@@ -225,8 +231,12 @@ int main(int, char **) {
             conv2_bias, conv3_weight, conv3_bias, conv4_weight, conv4_bias,
             input_tensor, num_repetitions, results);
         // check correctness of the output
-        if (results != expected_output_tensor) {
-            throw std::runtime_error("results != expected_output_tensor");
+        for (size_t i = 0; i < results.size(); ++i) {
+            if (results[i] != expected_output_tensor[i]) {
+                std::cerr << "results[" << i << "] = " << results[i] << 
+                             " != expected_output_tensor[" << i << "] = " << expected_output_tensor[i] << std::endl;
+                throw std::runtime_error("results != expected_output_tensor");
+            }
         }
         std::cout << "Duration: " << duration.count() << "s" << std::endl;
         std::cout << "On average: " << duration.count() / static_cast<float>(num_repetitions) << "s" << std::endl;
