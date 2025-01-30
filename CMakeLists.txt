@@ -21,7 +21,7 @@ include(ExternalProject)
 include(FetchContent)
 FetchContent_Declare(
   dalotia
-  GIT_REPOSITORY https://github.com/RIKEN-RCCS/dalotia.git #TODO replace w/ https
+  GIT_REPOSITORY git@github.com:RIKEN-RCCS/dalotia.git #TODO replace w/ https
   GIT_TAG main # TODO replace with release tag
   # CMAKE_ARGS  # I believe these are ignored, set like below
   #       -D DALOTIA_BUILD_TESTS=ON
