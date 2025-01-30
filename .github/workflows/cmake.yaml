@@ -15,12 +15,12 @@ jobs:
       uses: actions/checkout@v4.2.0
     # https://github.com/actions/checkout/issues/462#issuecomment-1697584038
     - name: Configure CMake
-        env:
-          GH_PAT: ${{ READ_TOKEN }}
-        run: |
-          # Need a little regex here so we can download repo with PAT
-          sed -i 's|git@github.com:|https://$ENV\{GH_PAT\}@github.com/|g' CMakeLists.txt
-          cmake -S . -B build
+      env:
+        GH_PAT: ${{ READ_TOKEN }}
+      run: |
+        # Need a little regex here so we can download repo with PAT
+        sed -i 's|git@github.com:|https://$ENV\{GH_PAT\}@github.com/|g' CMakeLists.txt
+        cmake -S . -B build
     - name: Configure and Build Project
       uses: threeal/cmake-action@v1.3.0
       with:
