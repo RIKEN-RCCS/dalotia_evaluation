@@ -200,8 +200,9 @@ def create_torch_model_file(torch_module, forward_input):
     st.save_model(torch_module, weights_file_name)
     input_file_name = "input_" + torch_module.__class__.__name__ + ".safetensors"
     st.save_file({"random_input": forward_input}, input_file_name)
-
-    return
+    output = torch_module.forward(example_forward_input)
+    output_file_name = "output_" + torch_module.__class__.__name__ + ".safetensors"
+    st.save_file({"output": output}, output_file_name)
     
 
 # %%
