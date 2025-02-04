@@ -11,6 +11,8 @@ jobs:
     name: Dalotia Evaluation Build
     runs-on: ubuntu-latest
     steps:
+    - name: install openblas
+      run: sudo apt-get install libopenblas-dev
     - name: Checkout
       uses: actions/checkout@v4.2.0
     # https://github.com/actions/checkout/issues/462#issuecomment-1697584038
