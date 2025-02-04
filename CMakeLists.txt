@@ -8,8 +8,6 @@ option(DALOTIA_E_WITH_LIBTORCH "include libtorch for jitted tensor operations" O
 option(DALOTIA_E_WITH_FORTRAN "Build Fortran interface" ON)
 if (DALOTIA_E_WITH_FORTRAN)
     enable_language(Fortran)
-    set( CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    install(DIRECTORY ${CMAKE_Fortran_MODULE_DIRECTORY} DESTINATION ${CMAKE_CURRENT_SOURCE_DIR})
 endif (DALOTIA_E_WITH_FORTRAN)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -47,7 +45,7 @@ endif (DALOTIA_E_USE_OLD_ABI)
 
 set(BLA_STATIC ON)
 set(BLA_VENDOR "OpenBLAS") # or: Fujitsu_SSL2...
-find_package(BLAS)
+find_package(BLAS) # careful: torch may be shipped with its own blas
 if (NOT BLAS_FOUND)
   # try to find any BLAS
   unset(BLA_VENDOR)
@@ -138,6 +136,17 @@ if (DALOTIA_E_WITH_LIBTORCH)
   find_package (Torch PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../pytorch NO_DEFAULT_PATH)
   find_package(Torch REQUIRED)
   set(BUILD_SHARED_LIBS OFF)
+
+  # # addresses: libgfortran-daac5196.so.5.0.0, needed by 
+  # # .../venv/lib64/python3.12/site-packages/torch/lib/../../torch.libs/libopenblasp-r0-2e4c6a40.3.25.so, not found
+  # message(STATUS "I Found Torch lib: ${TORCH_LIBRARY}")
+  # message(STATUS "I Found Torch dir: ${Torch_DIR}")
+  # cmake_path(GET ${Torch_DIR} PARENT_PATH p) #?? undefined?!?‽
+  # LIST(APPEND TORCH_LIBRARIES "${p}/../../../../torch.libs")
+  # message(STATUS "Torch libraries are: ${TORCH_LIBRARIES}")
+  
+  # well then I'll just add it manually for now
+  # link_directories("../venv/lib64/python3.12/site-packages/torch.libs/")
 endif(DALOTIA_E_WITH_LIBTORCH)
 
 if (DALOTIA_E_WITH_BOOST_MULTI)
