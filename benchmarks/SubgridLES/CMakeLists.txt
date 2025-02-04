@@ -1,5 +1,12 @@
+if (DALOTIA_E_WITH_LIBTORCH)
+    add_executable( subgridLES_cpp subgridLES.cpp )
+    target_link_libraries( subgridLES_cpp PUBLIC dalotia_cpp )
+    target_link_libraries(subgridLES_cpp PRIVATE "${TORCH_LIBRARIES}")
+    add_dependencies( subgridLES_cpp torch )
+endif(DALOTIA_E_WITH_LIBTORCH)
+
 if (DALOTIA_E_WITH_FORTRAN)
-    add_executable( subgridLES_fortran subgridLES.f03 ) #TODO this does not put the executable in the compile / link line??? -> newer cmake works
+    add_executable( subgridLES_fortran subgridLES.f03 )
     # add sources
     target_include_directories( subgridLES_fortran PUBLIC $<TARGET_PROPERTY:dalotia_fortran,Fortran_MODULE_DIRECTORY>)
     set_target_properties(subgridLES_fortran PROPERTIES LINKER_LANGUAGE Fortran)
