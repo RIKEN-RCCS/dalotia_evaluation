@@ -123,11 +123,7 @@ void conv3d_with_relu_naive(
                                 }
                             }
                         }
-                        if (value < 0.) {
-                            value = 0.;
-                        }
-                        output[output_indexer(
-                            {o, f, k, i, j})] = value;
+                        output[output_indexer({o, f, k, i, j})] = std::max(0.f, value);
                     }
                 }
             }
@@ -193,6 +189,24 @@ std::chrono::duration<double> run_inference_slow_loops(
         // apply first convolution + ReLU
         conv3d_with_relu_naive(conv1_weight, conv1_weight_extents, conv1_bias, input_vector_padded, input_padded_extents, conv1_output);
         assert_close(conv1_output[0], 0.2333);
+        conv3d_with_relu_naive(conv2_weight, conv2_weight_extents, conv2_bias, conv1_output, conv1_output_extents, conv2_output);
+        assert_close(conv2_output[0], 1.3398);
+        conv3d_with_relu_naive(conv3_weight, conv3_weight_extents, conv3_bias, conv2_output, conv2_output_extents, conv3_output);
+        assert_close(conv3_output[0], 3.4653);
+        for (int o = 0; o < num_inputs; ++o) {
+            float value = conv4_bias[0];
+            for (int c = 0; c < 4; ++c) {
+                for (int l = 0; l < 2; ++l) {
+                    for (int m = 0; m < 2; ++m) {
+                        for (int n = 0; n < 2; ++n) {
+                            value += conv4_weight[conv4_weight_indexer({0, c, l, m, n})] * conv3_output[conv3_output_indexer({o, c, l, m, n})];
+                        }
+                    }
+                }
+            }
+            // apply half-sigmoid activation
+            results[o] = 0.5 * 1. / (1. + std::exp(-value));
+        }
     }
     return std::chrono::high_resolution_clock::now() - start;
 }
@@ -295,7 +309,7 @@ int main(int, char **) {
             input_tensor, input_extents, num_repetitions, results);
         // check correctness of the output
         for (size_t i = 0; i < results.size(); ++i) {
-            if (results[i] != expected_output_tensor[i]) {
+            if (! is_close(results[i], expected_output_tensor[i])) {
                 std::cerr << "results[" << i << "] = " << results[i] << 
                              " != expected_output_tensor[" << i << "] = " << expected_output_tensor[i] << std::endl;
                 throw std::runtime_error("results != expected_output_tensor");
