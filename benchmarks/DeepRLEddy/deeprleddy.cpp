@@ -197,7 +197,38 @@ std::chrono::duration<double> run_inference_slow_loops(
     return std::chrono::high_resolution_clock::now() - start;
 }
 
+#ifdef DALOTIA_E_WITH_LIBTORCH
+std::chrono::duration<double> run_inference_libtorch(
+    const dalotia::vector<float> &conv1_weight,
+    const dalotia::vector<float> &conv1_bias,
+    const dalotia::vector<float> &conv2_weight,
+    const dalotia::vector<float> &conv2_bias,
+    const dalotia::vector<float> &conv3_weight,
+    const dalotia::vector<float> &conv3_bias,
+    const dalotia::vector<float> &conv4_weight,
+    const dalotia::vector<float> &conv4_bias,
+    const dalotia::vector<float> &inputs,
+    const dalotia::vector<int> &input_extents,
+    size_t num_repetitions,
+    dalotia::vector<float> &results) {
 
+    torch::jit::script::Module module = torch::jit::load("traced_DeepRLEddyNet.pt");
+    module = torch::jit::optimize_for_inference(module);
+
+    // todo keep const semantics on input -> seems that's not a thing in libtorch
+    const auto input_tensor = torch::from_blob(
+            reinterpret_cast<void*>(const_cast<float*>(inputs.data())), 
+            at::IntArrayRef({input_extents[0], input_extents[1], input_extents[2], input_extents[3], input_extents[4]})
+        );
+    const auto start = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < num_repetitions; ++r) {
+        auto output_tensor = module.forward({input_tensor}).toTensor();
+        // assign to output
+        std::memcpy(results.data(), output_tensor.data_ptr(), output_tensor.numel() * sizeof(float));
+    }
+    return std::chrono::high_resolution_clock::now() - start;
+}
+#endif  // DALOTIA_E_WITH_LIBTORCH
 
 int main(int, char **) {
     // the data used here is generated with generate_models.py
@@ -244,6 +275,12 @@ int main(int, char **) {
     std::unordered_map<std::string, inference_function> inference_functions;
 
     inference_functions["slow_loops"] = run_inference_slow_loops;
+
+#ifdef DALOTIA_E_WITH_LIBTORCH
+    inference_functions["libtorch"] = run_inference_libtorch;
+#else
+    std::cout << "libtorch not enabled" << std::endl;
+#endif  // DALOTIA_E_WITH_LIBTORCH
 
     const size_t num_repetitions = 1;
     dalotia::vector<float> results(expected_output_tensor.size());
