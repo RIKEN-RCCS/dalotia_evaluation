@@ -86,7 +86,54 @@ constexpr std::array<int, 5> conv2_weight_extents = {8, 8, 3, 3, 3};
 constexpr std::array<int, 5> conv3_weight_extents = {4, 8, 3, 3, 3};
 constexpr std::array<int, 5> conv4_weight_extents = {1, 4, 2, 2, 2};
 
+void conv3d_with_relu_naive(
+            const dalotia::vector<float> &conv_weight,
+            const std::array<int, 5> &conv_weight_extents,
+            const dalotia::vector<float> &conv_bias,
+            const dalotia::vector<float> &input_tensor,
+            const std::array<int, 5> &input_extents,
+            dalotia::vector<float> &output) {
+    const auto& [F, C, L, M, N] = conv_weight_extents;
+    const auto& [num_inputs, C2, K, I, J] = input_extents;
+    assert(C2 == C);
+    const std::array<int, 5> output_extents = {num_inputs, F, K - 2, I - 2, J - 2};
+    assert(output.size() == std::accumulate(output_extents.begin(), output_extents.end(), 1, std::multiplies<int>()));
+    const auto conv_weight_indexer = get_tensor_indexer<5>(conv_weight_extents);
+    const auto input_indexer = get_tensor_indexer<5>(input_extents);
+    const auto output_indexer = get_tensor_indexer<5>(output_extents);
 
+    // stride 1, padding 1
+#pragma omp parallel for schedule(static) collapse(2)
+    for (int o = 0; o < num_inputs; ++o) {
+        for (int f = 0; f < F; ++f) {
+            for (int k = 0; k < (K - L + 1); ++k) {
+                for (int i = 0; i < (I - M + 1); ++i) {
+                    for (int j = 0; j < (J - N + 1); ++j) {
+                        float value = conv_bias[f];
+                        for (int c = 0; c < C; ++c) {
+                            for (int l = 0; l < L; ++l) {
+                                for (int m = 0; m < M; ++m) {
+                                    for (int n = 0; n < N; ++n) {
+                                        value +=
+                                            conv_weight[conv_weight_indexer(
+                                                {f, c, l, m, n})] *
+                                            input_tensor[input_indexer(
+                                                {o, c, k + l, i + m, j + n})];
+                                    }
+                                }
+                            }
+                        }
+                        if (value < 0.) {
+                            value = 0.;
+                        }
+                        output[output_indexer(
+                            {o, f, k, i, j})] = value;
+                    }
+                }
+            }
+        }
+    }
+}
 
 std::chrono::duration<double> run_inference_slow_loops(
     const dalotia::vector<float> &conv1_weight,
@@ -98,18 +145,18 @@ std::chrono::duration<double> run_inference_slow_loops(
     const dalotia::vector<float> &conv4_weight,
     const dalotia::vector<float> &conv4_bias,
     const dalotia::vector<float> &input_tensor,
+    const dalotia::vector<int> &input_extents,
     size_t num_repetitions,
     dalotia::vector<float> &results){
 
-    const auto conv1_weight_indexer =
-        get_tensor_indexer<5>(conv1_weight_extents);
-    const auto conv2_weight_indexer =
-        get_tensor_indexer<5>(conv2_weight_extents);
+    const auto conv4_weight_indexer =
+        get_tensor_indexer<5>(conv4_weight_extents);
 
     const int num_inputs = input_tensor.size() / (6*6*6) / 3;
-    const std::array<int, 5> input_extents = {num_inputs, 3, 6, 6, 6};
+    std::array<int, 5> input_extents_array;
+    std::copy(input_extents.begin(), input_extents.end(), input_extents_array.begin());
     const auto input_indexer =
-        get_tensor_indexer<5>(input_extents);
+        get_tensor_indexer<5>(input_extents_array);
     const std::array<int, 5> input_padded_extents = {num_inputs, 3, 8, 8, 8};
     const auto input_padded_indexer =
         get_tensor_indexer<5>(input_padded_extents);
@@ -117,8 +164,14 @@ std::chrono::duration<double> run_inference_slow_loops(
 
 
     const std::array<int, 5> conv1_output_extents = {num_inputs, 8, 6, 6, 6};
-    const auto conv1_output_indexer = get_tensor_indexer<5>(conv1_output_extents);
     auto conv1_output = dalotia::vector<float>(std::accumulate(conv1_output_extents.begin(), conv1_output_extents.end(), 1, std::multiplies<int>()));
+    const std::array<int, 5> conv2_output_extents = {num_inputs, 8, 4, 4, 4};
+    auto conv2_output = dalotia::vector<float>(std::accumulate(conv2_output_extents.begin(), conv2_output_extents.end(), 1, std::multiplies<int>()));
+    const std::array<int, 5> conv3_output_extents = {num_inputs, 4, 2, 2, 2};
+    auto conv3_output = dalotia::vector<float>(std::accumulate(conv3_output_extents.begin(), conv3_output_extents.end(), 1, std::multiplies<int>()));
+    const auto conv3_output_indexer =
+        get_tensor_indexer<5>(conv3_output_extents);
+    auto conv4_output = dalotia::vector<float>(num_inputs);
 
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t batch_index = 0; batch_index < num_repetitions; ++batch_index) {
@@ -137,37 +190,9 @@ std::chrono::duration<double> run_inference_slow_loops(
                 }
             }
         }
-
         // apply first convolution + ReLU
-        for (int o = 0; o < num_inputs; ++o) {
-            for (int c = 0; c < 3; ++c) {
-                for (int k = 1; k < 7; ++k) {
-                    for (int i = 1; i < 7; ++i) {
-                        for (int j = 1; j < 7; ++j) {
-                            for (int f = 0; f < 3; ++f) {
-                                float value = conv1_bias[c];
-                                for (int l = 0; l < 3; ++l) {
-                                    for (int m = 0; m < 3; ++m) {
-                                        for (int n = 0; n < 3; ++n) {
-                                            value +=
-                                                conv1_weight[conv1_weight_indexer(
-                                                    {f, c, l, m, n})] *
-                                                input_vector_padded[input_padded_indexer(
-                                                    {o, c, k + l - 1, i + m - 1, j + n - 1})];
-                                        }
-                                    }
-                                }
-                                if (value < 0.) {
-                                    value = 0.;
-                                }
-                                conv1_output[conv1_output_indexer(
-                                    {o, c, k - 1, i - 1, j - 1})] = value;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        conv3d_with_relu_naive(conv1_weight, conv1_weight_extents, conv1_bias, input_vector_padded, input_padded_extents, conv1_output);
+        assert_close(conv1_output[0], 0.2333);
     }
     return std::chrono::high_resolution_clock::now() - start;
 }
@@ -180,11 +205,11 @@ int main(int, char **) {
 
     const auto [read_conv1_weight_extents, conv1_weight, conv1_bias_extents, conv1_bias] = test_load(filename, "conv1");
     assert(read_conv1_weight_extents == std::vector<int>({8, 3, 3, 3, 3}));
-    const auto [read_conv2_weight_extents, conv2_weight, conv2_bias_extents,conv2_bias] = test_load(filename, "conv2");
+    const auto [read_conv2_weight_extents, conv2_weight, conv2_bias_extents, conv2_bias] = test_load(filename, "conv2");
     assert(read_conv2_weight_extents == std::vector<int>({8, 8, 3, 3, 3}));
-    const auto [read_conv3_weight_extents, conv3_weight, conv3_bias_extents,conv3_bias] = test_load(filename, "conv3");
+    const auto [read_conv3_weight_extents, conv3_weight, conv3_bias_extents, conv3_bias] = test_load(filename, "conv3");
     assert(read_conv3_weight_extents == std::vector<int>({4, 8, 3, 3, 3}));
-    const auto [read_conv4_weight_extents, conv4_weight, conv4_bias_extents,conv4_bias] = test_load(filename, "conv4");
+    const auto [read_conv4_weight_extents, conv4_weight, conv4_bias_extents, conv4_bias] = test_load(filename, "conv4");
     assert(read_conv4_weight_extents == std::vector<int>({1, 4, 2, 2, 2}));
 
     // unpermuted for now
@@ -198,9 +223,9 @@ int main(int, char **) {
         dalotia::load_tensor_dense<float>("./output_DeepRLEddyNet.safetensors", "output",
                                           dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering);
     assert(output_extents == std::vector<int>(1, 16*16*16));
-    assert_close(expected_output_tensor[0], 0.4075);
-    assert_close(expected_output_tensor[1], 0.4049);
-    assert_close(expected_output_tensor[4095], 0.4164);
+    assert_close(expected_output_tensor[0], 0.4487);
+    assert_close(expected_output_tensor[1], 0.4471);
+    assert_close(expected_output_tensor[4095], 0.4541);
 
     typedef std::function<std::chrono::duration<double>(
         const dalotia::vector<float> &conv1_weight,
@@ -212,6 +237,7 @@ int main(int, char **) {
         const dalotia::vector<float> &conv4_weight,
         const dalotia::vector<float> &conv4_bias,
         const dalotia::vector<float> &input_tensor,
+        const dalotia::vector<int> &input_extents,
         size_t num_repetitions,
         dalotia::vector<float> &results)>
         inference_function;
@@ -229,7 +255,7 @@ int main(int, char **) {
         const auto duration = inference_function(
             conv1_weight, conv1_bias, conv2_weight,
             conv2_bias, conv3_weight, conv3_bias, conv4_weight, conv4_bias,
-            input_tensor, num_repetitions, results);
+            input_tensor, input_extents, num_repetitions, results);
         // check correctness of the output
         for (size_t i = 0; i < results.size(); ++i) {
             if (results[i] != expected_output_tensor[i]) {
