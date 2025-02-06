@@ -132,18 +132,21 @@ void conv3d_with_relu_naive(
 }
 
 std::chrono::duration<double> run_inference_slow_loops(
-    const dalotia::vector<float> &conv1_weight,
-    const dalotia::vector<float> &conv1_bias,
-    const dalotia::vector<float> &conv2_weight,
-    const dalotia::vector<float> &conv2_bias,
-    const dalotia::vector<float> &conv3_weight,
-    const dalotia::vector<float> &conv3_bias,
-    const dalotia::vector<float> &conv4_weight,
-    const dalotia::vector<float> &conv4_bias,
     const dalotia::vector<float> &input_tensor,
     const dalotia::vector<int> &input_extents,
     size_t num_repetitions,
     dalotia::vector<float> &results){
+
+    std::string filename = "./weights_DeepRLEddyNet.safetensors";
+
+    const auto [read_conv1_weight_extents, conv1_weight, conv1_bias_extents, conv1_bias] = test_load(filename, "conv1");
+    assert(read_conv1_weight_extents == std::vector<int>({8, 3, 3, 3, 3}));
+    const auto [read_conv2_weight_extents, conv2_weight, conv2_bias_extents, conv2_bias] = test_load(filename, "conv2");
+    assert(read_conv2_weight_extents == std::vector<int>({8, 8, 3, 3, 3}));
+    const auto [read_conv3_weight_extents, conv3_weight, conv3_bias_extents, conv3_bias] = test_load(filename, "conv3");
+    assert(read_conv3_weight_extents == std::vector<int>({4, 8, 3, 3, 3}));
+    const auto [read_conv4_weight_extents, conv4_weight, conv4_bias_extents, conv4_bias] = test_load(filename, "conv4");
+    assert(read_conv4_weight_extents == std::vector<int>({1, 4, 2, 2, 2}));
 
     const auto conv4_weight_indexer =
         get_tensor_indexer<5>(conv4_weight_extents);
@@ -213,14 +216,6 @@ std::chrono::duration<double> run_inference_slow_loops(
 
 #ifdef DALOTIA_E_WITH_LIBTORCH
 std::chrono::duration<double> run_inference_libtorch(
-    const dalotia::vector<float> &conv1_weight,
-    const dalotia::vector<float> &conv1_bias,
-    const dalotia::vector<float> &conv2_weight,
-    const dalotia::vector<float> &conv2_bias,
-    const dalotia::vector<float> &conv3_weight,
-    const dalotia::vector<float> &conv3_bias,
-    const dalotia::vector<float> &conv4_weight,
-    const dalotia::vector<float> &conv4_bias,
     const dalotia::vector<float> &inputs,
     const dalotia::vector<int> &input_extents,
     size_t num_repetitions,
@@ -246,16 +241,6 @@ std::chrono::duration<double> run_inference_libtorch(
 
 int main(int, char **) {
     // the data used here is generated with generate_models.py
-    std::string filename = "./weights_DeepRLEddyNet.safetensors";
-
-    const auto [read_conv1_weight_extents, conv1_weight, conv1_bias_extents, conv1_bias] = test_load(filename, "conv1");
-    assert(read_conv1_weight_extents == std::vector<int>({8, 3, 3, 3, 3}));
-    const auto [read_conv2_weight_extents, conv2_weight, conv2_bias_extents, conv2_bias] = test_load(filename, "conv2");
-    assert(read_conv2_weight_extents == std::vector<int>({8, 8, 3, 3, 3}));
-    const auto [read_conv3_weight_extents, conv3_weight, conv3_bias_extents, conv3_bias] = test_load(filename, "conv3");
-    assert(read_conv3_weight_extents == std::vector<int>({4, 8, 3, 3, 3}));
-    const auto [read_conv4_weight_extents, conv4_weight, conv4_bias_extents, conv4_bias] = test_load(filename, "conv4");
-    assert(read_conv4_weight_extents == std::vector<int>({1, 4, 2, 2, 2}));
 
     // unpermuted for now
     auto [input_extents, input_tensor] =dalotia::load_tensor_dense<float>("./input_DeepRLEddyNet.safetensors", "random_input",
@@ -273,14 +258,6 @@ int main(int, char **) {
     assert_close(expected_output_tensor[4095], 0.4541);
 
     typedef std::function<std::chrono::duration<double>(
-        const dalotia::vector<float> &conv1_weight,
-        const dalotia::vector<float> &conv1_bias,
-        const dalotia::vector<float> &conv2_weight,
-        const dalotia::vector<float> &conv2_bias,
-        const dalotia::vector<float> &conv3_weight,
-        const dalotia::vector<float> &conv3_bias,
-        const dalotia::vector<float> &conv4_weight,
-        const dalotia::vector<float> &conv4_bias,
         const dalotia::vector<float> &input_tensor,
         const dalotia::vector<int> &input_extents,
         size_t num_repetitions,
@@ -304,8 +281,6 @@ int main(int, char **) {
         std::memset(results.data(), 0, results.size() * sizeof(int));
 
         const auto duration = inference_function(
-            conv1_weight, conv1_bias, conv2_weight,
-            conv2_bias, conv3_weight, conv3_bias, conv4_weight, conv4_bias,
             input_tensor, input_extents, num_repetitions, results);
         // check correctness of the output
         for (size_t i = 0; i < results.size(); ++i) {
