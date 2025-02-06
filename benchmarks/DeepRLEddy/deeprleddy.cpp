@@ -227,8 +227,27 @@ std::chrono::duration<double> run_inference_onednn(
     dalotia::vector<float> &results) {
 
     std::string filename = "./weights_DeepRLEddyNet.safetensors";
-    dalotia::SafetensorsFile dalotia_file(filename);
+    dalotia::vector<float> conv1_weight(std::accumulate(conv1_weight_extents.begin(), conv1_weight_extents.end(), 1, std::multiplies<int>()));
+    dalotia::vector<float> conv2_weight(std::accumulate(conv2_weight_extents.begin(), conv2_weight_extents.end(), 1, std::multiplies<int>()));
+    dalotia::vector<float> conv3_weight(std::accumulate(conv3_weight_extents.begin(), conv3_weight_extents.end(), 1, std::multiplies<int>()));
+    dalotia::vector<float> conv4_weight(std::accumulate(conv4_weight_extents.begin(), conv4_weight_extents.end(), 1, std::multiplies<int>()));
+    dalotia::vector<float> conv1_bias(conv1_weight_extents[0]);
+    dalotia::vector<float> conv2_bias(conv2_weight_extents[0]);
+    dalotia::vector<float> conv3_bias(conv3_weight_extents[0]);
+    dalotia::vector<float> conv4_bias(conv4_weight_extents[0]);
 
+    {
+        // open the file only once and close at end of scope
+        dalotia::SafetensorsFile dalotia_file(filename);
+        dalotia_file.load_tensor_dense("conv1.weight", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv1_weight.data()));
+        dalotia_file.load_tensor_dense("conv2.weight", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv2_weight.data()));
+        dalotia_file.load_tensor_dense("conv3.weight", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv3_weight.data()));
+        dalotia_file.load_tensor_dense("conv4.weight", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv4_weight.data()));
+        dalotia_file.load_tensor_dense("conv1.bias", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv1_bias.data()));
+        dalotia_file.load_tensor_dense("conv2.bias", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv2_bias.data()));
+        dalotia_file.load_tensor_dense("conv3.bias", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv3_bias.data()));
+        dalotia_file.load_tensor_dense("conv4.bias", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv4_bias.data()));
+    }
     // cf. https://github.com/oneapi-src/oneDNN/blob/main/examples/cnn_inference_f32.cpp
     const dnnl::engine::kind engine_kind = dnnl::engine::kind::cpu;
     dnnl::engine eng(engine_kind, 0);
@@ -236,31 +255,61 @@ std::chrono::duration<double> run_inference_onednn(
     std::vector<dnnl::primitive> net;
     std::vector<std::unordered_map<int, dnnl::memory>> net_args;
 
+    int num_inputs = input_extents[0];
     dnnl::memory::dims input_tz(input_extents.begin(), input_extents.end());
     dnnl::memory::dims conv1_weights_tz(conv1_weight_extents.begin(), conv1_weight_extents.end());
+    dnnl::memory::dims conv2_weights_tz(conv2_weight_extents.begin(), conv2_weight_extents.end());
+    dnnl::memory::dims conv3_weights_tz(conv3_weight_extents.begin(), conv3_weight_extents.end());
+    dnnl::memory::dims conv4_weights_tz(conv4_weight_extents.begin(), conv4_weight_extents.end());
     dnnl::memory::dims conv1_bias_tz({conv1_weight_extents[0]});
+    dnnl::memory::dims conv2_bias_tz({conv2_weight_extents[0]});
+    dnnl::memory::dims conv3_bias_tz({conv3_weight_extents[0]});
+    dnnl::memory::dims conv4_bias_tz({conv4_weight_extents[0]});
     dnnl::memory::dims conv1_output_extents = {input_extents[0], conv1_weight_extents[0], 6, 6, 6};
-    dnnl::memory::dims conv1_strides = {1, 1, 1};
-    dnnl::memory::dims conv1_padding = {1, 1, 1};
+    dnnl::memory::dims conv2_output_extents = {input_extents[0], conv2_weight_extents[0], 4, 4, 4};
+    dnnl::memory::dims conv3_output_extents = {input_extents[0], conv3_weight_extents[0], 2, 2, 2};
+    dnnl::memory::dims conv_strides = {1, 1, 1};
+    dnnl::memory::dims conv_yes_to_padding = {1, 1, 1};
+    dnnl::memory::dims conv_no_to_padding = {0, 0, 0};
 
     auto conv1_original_weights_md = dnnl::memory::desc({conv1_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::oidhw);
+    auto conv2_original_weights_md = dnnl::memory::desc({conv2_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::oidhw);
+    auto conv3_original_weights_md = dnnl::memory::desc({conv3_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::oidhw);
+    auto conv4_original_weights_md = dnnl::memory::desc({conv4_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::oidhw);
     auto conv1_original_bias_md = dnnl::memory::desc({conv1_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+    auto conv2_original_bias_md = dnnl::memory::desc({conv2_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+    auto conv3_original_bias_md = dnnl::memory::desc({conv3_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+    auto conv4_original_bias_md = dnnl::memory::desc({conv4_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
 
-    auto original_input_memory = dnnl::memory({{input_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ncdhw}, eng);
-    std::memcpy(original_input_memory.get_data_handle(), input_tensor.data(), input_tensor.size() * sizeof(float));
-    auto conv1_original_weights_memory = dnnl::memory(conv1_original_weights_md, eng);
-    auto conv1_original_bias_memory = dnnl::memory(conv1_original_bias_md, eng);
+    auto original_input_memory = dnnl::memory({{input_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ncdhw}, eng, reinterpret_cast<void*>(const_cast<float*>(input_tensor.data())));
+    auto conv1_original_weights_memory = dnnl::memory(conv1_original_weights_md, eng, reinterpret_cast<void*>(conv1_weight.data()));
+    auto conv2_original_weights_memory = dnnl::memory(conv2_original_weights_md, eng, reinterpret_cast<void*>(conv2_weight.data()));
+    auto conv3_original_weights_memory = dnnl::memory(conv3_original_weights_md, eng, reinterpret_cast<void*>(conv3_weight.data()));
+    auto conv4_original_weights_memory = dnnl::memory(conv4_original_weights_md, eng, reinterpret_cast<void*>(conv4_weight.data()));
+    auto conv1_original_bias_memory = dnnl::memory(conv1_original_bias_md, eng, reinterpret_cast<void*>(conv1_bias.data()));
+    auto conv2_original_bias_memory = dnnl::memory(conv2_original_bias_md, eng, reinterpret_cast<void*>(conv2_bias.data()));
+    auto conv3_original_bias_memory = dnnl::memory(conv3_original_bias_md, eng, reinterpret_cast<void*>(conv3_bias.data()));
+    auto conv4_original_bias_memory = dnnl::memory(conv4_original_bias_md, eng, reinterpret_cast<void*>(conv4_bias.data()));
 
     auto adapted_input_md = dnnl::memory::desc({input_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
     auto conv1_adapted_weights_md = dnnl::memory::desc({conv1_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv2_adapted_weights_md = dnnl::memory::desc({conv2_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv3_adapted_weights_md = dnnl::memory::desc({conv3_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv4_adapted_weights_md = dnnl::memory::desc({conv4_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
     auto conv1_adapted_bias_md = dnnl::memory::desc({conv1_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv2_adapted_bias_md = dnnl::memory::desc({conv2_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv3_adapted_bias_md = dnnl::memory::desc({conv3_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv4_adapted_bias_md = dnnl::memory::desc({conv4_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
     auto conv1_adapted_output_md = dnnl::memory::desc({conv1_output_extents}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv2_adapted_output_md = dnnl::memory::desc({conv2_output_extents}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv3_adapted_output_md = dnnl::memory::desc({conv3_output_extents}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv4_adapted_output_md = dnnl::memory::desc({num_inputs}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
 
     auto conv1_prim_desc = dnnl::convolution_forward::primitive_desc(eng,
             dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
             adapted_input_md, conv1_adapted_weights_md,
-            conv1_adapted_bias_md, conv1_adapted_output_md, conv1_strides, conv1_padding,
-            conv1_padding);
+            conv1_adapted_bias_md, conv1_adapted_output_md, conv_strides, conv_yes_to_padding,
+            conv_yes_to_padding);
     auto conv1_src_memory = original_input_memory;
     if (conv1_prim_desc.src_desc() != original_input_memory.get_desc()) {
         conv1_src_memory = dnnl::memory(conv1_prim_desc.src_desc(), eng);
@@ -277,13 +326,89 @@ std::chrono::duration<double> run_inference_onednn(
     }  
     auto conv1_dst_memory = dnnl::memory(conv1_prim_desc.dst_desc(), eng);
 
+    net.push_back(dnnl::convolution_forward(conv1_prim_desc));
+    net_args.push_back({{DNNL_ARG_SRC, conv1_src_memory},
+            {DNNL_ARG_WEIGHTS, conv1_weights_memory},
+            {DNNL_ARG_BIAS, conv1_original_bias_memory},
+            {DNNL_ARG_DST, conv1_dst_memory}});
+
+    const float negative_relu_slope = 0.0f;
+    auto relu1_prim_desc = dnnl::eltwise_forward::primitive_desc(eng, dnnl::prop_kind::forward_inference,
+            dnnl::algorithm::eltwise_relu, conv1_dst_memory.get_desc(), conv1_dst_memory.get_desc(), negative_relu_slope);
+    net.push_back(dnnl::eltwise_forward(relu1_prim_desc));
+    net_args.push_back({{DNNL_ARG_SRC, conv1_dst_memory},
+            {DNNL_ARG_DST, conv1_dst_memory}});
+
+    auto conv2_prim_desc = dnnl::convolution_forward::primitive_desc(eng,
+            dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
+            conv1_dst_memory.get_desc(), conv2_adapted_weights_md,
+            conv2_adapted_bias_md, conv2_adapted_output_md, conv_strides, conv_no_to_padding,
+            conv_no_to_padding);
+    auto conv2_src_memory = conv1_dst_memory;
+    if (conv2_prim_desc.src_desc() != conv1_dst_memory.get_desc()) {
+        conv2_src_memory = dnnl::memory(conv2_prim_desc.src_desc(), eng);
+        net.push_back(dnnl::reorder(conv1_dst_memory, conv2_src_memory));
+        net_args.push_back({{DNNL_ARG_FROM, conv1_dst_memory},
+                {DNNL_ARG_TO, conv2_src_memory}});
+    }
+    auto conv2_weights_memory = conv2_original_weights_memory;
+    if (conv2_prim_desc.weights_desc() != conv2_original_weights_md) {
+        conv2_weights_memory = dnnl::memory(conv2_prim_desc.weights_desc(), eng);
+        dnnl::reorder(conv2_original_weights_memory, conv2_weights_memory)
+                .execute(s, conv2_original_weights_memory, conv2_weights_memory);
+    }
+    auto conv2_dst_memory = dnnl::memory(conv2_prim_desc.dst_desc(), eng);
+    net.push_back(dnnl::convolution_forward(conv2_prim_desc));
+    net_args.push_back({{DNNL_ARG_SRC, conv2_src_memory},
+            {DNNL_ARG_WEIGHTS, conv2_weights_memory},
+            {DNNL_ARG_BIAS, conv2_original_bias_memory},
+            {DNNL_ARG_DST, conv2_dst_memory}});
+
+    auto relu2_prim_desc = dnnl::eltwise_forward::primitive_desc(eng, dnnl::prop_kind::forward_inference,
+            dnnl::algorithm::eltwise_relu, conv2_dst_memory.get_desc(), conv2_dst_memory.get_desc(), negative_relu_slope);
+    net.push_back(dnnl::eltwise_forward(relu2_prim_desc));
+    net_args.push_back({{DNNL_ARG_SRC, conv2_dst_memory},
+            {DNNL_ARG_DST, conv2_dst_memory}});
+
+    auto conv3_prim_desc = dnnl::convolution_forward::primitive_desc(eng,
+            dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
+            conv2_dst_memory.get_desc(), conv3_adapted_weights_md,
+            conv3_adapted_bias_md, conv3_adapted_output_md, conv_strides, conv_no_to_padding,
+            conv_no_to_padding);
+    auto conv3_src_memory = conv2_dst_memory;
+    if (conv3_prim_desc.src_desc() != conv2_dst_memory.get_desc()) {
+        conv3_src_memory = dnnl::memory(conv3_prim_desc.src_desc(), eng);
+        net.push_back(dnnl::reorder(conv2_dst_memory, conv3_src_memory));
+        net_args.push_back({{DNNL_ARG_FROM, conv2_dst_memory},
+                {DNNL_ARG_TO, conv3_src_memory}});
+    }
+    auto conv3_weights_memory = conv3_original_weights_memory;
+    if (conv3_prim_desc.weights_desc() != conv3_original_weights_md) {
+        conv3_weights_memory = dnnl::memory(conv3_prim_desc.weights_desc(), eng);
+        dnnl::reorder(conv3_original_weights_memory, conv3_weights_memory)
+                .execute(s, conv3_original_weights_memory, conv3_weights_memory);
+    }
+    auto conv3_dst_memory = dnnl::memory(conv3_prim_desc.dst_desc(), eng);
+    net.push_back(dnnl::convolution_forward(conv3_prim_desc));
+    net_args.push_back({{DNNL_ARG_SRC, conv3_src_memory},
+            {DNNL_ARG_WEIGHTS, conv3_weights_memory},
+            {DNNL_ARG_BIAS, conv3_original_bias_memory},
+            {DNNL_ARG_DST, conv3_dst_memory}});
+    auto relu3_prim_desc = dnnl::eltwise_forward::primitive_desc(eng, dnnl::prop_kind::forward_inference,
+            dnnl::algorithm::eltwise_relu, conv3_dst_memory.get_desc(), conv3_dst_memory.get_desc(), negative_relu_slope);
+    net.push_back(dnnl::eltwise_forward(relu3_prim_desc));
+    net_args.push_back({{DNNL_ARG_SRC, conv3_dst_memory},
+            {DNNL_ARG_DST, conv3_dst_memory}});
+
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t r = 0; r < num_repetitions; ++r) {
         // execute net
         for (size_t i = 0; i < net.size(); ++i) {
             net.at(i).execute(s, net_args.at(i));
         }
-        //TODO copy back
+        // copy back //TODO set output memory same as results
+        auto* output_ptr = static_cast<float*>(conv3_dst_memory.get_data_handle());
+        results.assign(output_ptr, output_ptr + results.size());
     }
     return std::chrono::high_resolution_clock::now() - start;
 }
