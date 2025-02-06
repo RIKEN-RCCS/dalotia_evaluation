@@ -5,7 +5,8 @@ project(dalotia_evaluation)
 option(DALOTIA_E_WITH_BOOST_MULTI "include boost::multi for tensor operations" OFF)
 option(DALOTIA_E_WITH_NDIRECT "include ndirect for convolution operations on ARM" OFF)
 option(DALOTIA_E_WITH_LIBTORCH "include libtorch for jitted tensor operations" OFF)
-option(DALOTIA_E_WITH_FORTRAN "Build Fortran interface" ON)
+option(DALOTIA_E_WITH_ONEDNN "include oneDNN for tensor operations" OFF)
+option(DALOTIA_E_WITH_FORTRAN "Build Fortran executables" ON)
 if (DALOTIA_E_WITH_FORTRAN)
     enable_language(Fortran)
 endif (DALOTIA_E_WITH_FORTRAN)
@@ -81,6 +82,17 @@ if (DALOTIA_E_WITH_NDIRECT)
   set(NDIRECT_CPP_INCLUDE_DIR ${SOURCE_DIR}/direct_cnn)
   set(NDIRECT_CPP_LIBRARY_DIR ${SOURCE_DIR}/direct_cnn)
 endif (DALOTIA_E_WITH_NDIRECT)
+
+if (DALOTIA_E_WITH_ONEDNN)
+  FetchContent_Declare(
+    dnnl
+    GIT_REPOSITORY https://github.com/oneapi-src/oneDNN.git
+    GIT_TAG v3.6.2
+    OVERRIDE_FIND_PACKAGE
+  )
+  FetchContent_MakeAvailable(dnnl)
+  find_package(dnnl 3.6.2 CONFIG REQUIRED)
+endif (DALOTIA_E_WITH_ONEDNN)
 
 if (DALOTIA_E_WITH_LIBTORCH)
   # # beware: this can take half a day to download and compile

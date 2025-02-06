@@ -15,6 +15,11 @@
 #include <torch/script.h>
 #endif  // DALOTIA_E_WITH_LIBTORCH
 
+#ifdef DALOTIA_E_WITH_ONEDNN
+#include <oneapi/dnnl/dnnl.hpp>
+#include <oneapi/dnnl/dnnl_debug.h>
+#endif  // DALOTIA_E_WITH_ONEDNN
+
 std::tuple<dalotia::vector<int>, dalotia::vector<float>, dalotia::vector<int>, dalotia::vector<float>> test_load(
     std::string filename, std::string layer_name) {
     std::string tensor_name_weight = layer_name + ".weight";
@@ -214,6 +219,77 @@ std::chrono::duration<double> run_inference_slow_loops(
     return std::chrono::high_resolution_clock::now() - start;
 }
 
+#ifdef DALOTIA_E_WITH_ONEDNN
+std::chrono::duration<double> run_inference_onednn(
+    const dalotia::vector<float> &input_tensor,
+    const dalotia::vector<int> &input_extents,
+    size_t num_repetitions,
+    dalotia::vector<float> &results) {
+
+    std::string filename = "./weights_DeepRLEddyNet.safetensors";
+    dalotia::SafetensorsFile dalotia_file(filename);
+
+    // cf. https://github.com/oneapi-src/oneDNN/blob/main/examples/cnn_inference_f32.cpp
+    const dnnl::engine::kind engine_kind = dnnl::engine::kind::cpu;
+    dnnl::engine eng(engine_kind, 0);
+    dnnl::stream s(eng);    
+    std::vector<dnnl::primitive> net;
+    std::vector<std::unordered_map<int, dnnl::memory>> net_args;
+
+    dnnl::memory::dims input_tz(input_extents.begin(), input_extents.end());
+    dnnl::memory::dims conv1_weights_tz(conv1_weight_extents.begin(), conv1_weight_extents.end());
+    dnnl::memory::dims conv1_bias_tz({conv1_weight_extents[0]});
+    dnnl::memory::dims conv1_output_extents = {input_extents[0], conv1_weight_extents[0], 6, 6, 6};
+    dnnl::memory::dims conv1_strides = {1, 1, 1};
+    dnnl::memory::dims conv1_padding = {1, 1, 1};
+
+    auto conv1_original_weights_md = dnnl::memory::desc({conv1_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::oidhw);
+    auto conv1_original_bias_md = dnnl::memory::desc({conv1_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+
+    auto original_input_memory = dnnl::memory({{input_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ncdhw}, eng);
+    std::memcpy(original_input_memory.get_data_handle(), input_tensor.data(), input_tensor.size() * sizeof(float));
+    auto conv1_original_weights_memory = dnnl::memory(conv1_original_weights_md, eng);
+    auto conv1_original_bias_memory = dnnl::memory(conv1_original_bias_md, eng);
+
+    auto adapted_input_md = dnnl::memory::desc({input_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv1_adapted_weights_md = dnnl::memory::desc({conv1_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv1_adapted_bias_md = dnnl::memory::desc({conv1_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv1_adapted_output_md = dnnl::memory::desc({conv1_output_extents}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+
+    auto conv1_prim_desc = dnnl::convolution_forward::primitive_desc(eng,
+            dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
+            adapted_input_md, conv1_adapted_weights_md,
+            conv1_adapted_bias_md, conv1_adapted_output_md, conv1_strides, conv1_padding,
+            conv1_padding);
+    auto conv1_src_memory = original_input_memory;
+    if (conv1_prim_desc.src_desc() != original_input_memory.get_desc()) {
+        conv1_src_memory = dnnl::memory(conv1_prim_desc.src_desc(), eng);
+        net.push_back(dnnl::reorder(original_input_memory, conv1_src_memory));
+        net_args.push_back({{DNNL_ARG_FROM, original_input_memory},
+                {DNNL_ARG_TO, conv1_src_memory}});
+    }
+    auto conv1_weights_memory = conv1_original_weights_memory;
+    if (conv1_prim_desc.weights_desc() != conv1_original_weights_md) {
+        //TODO if the layout is unexpected, load through dalotia permuted instead
+        conv1_weights_memory = dnnl::memory(conv1_prim_desc.weights_desc(), eng);
+        dnnl::reorder(conv1_original_weights_memory, conv1_weights_memory)
+                .execute(s, conv1_original_weights_memory, conv1_weights_memory);
+    }  
+    auto conv1_dst_memory = dnnl::memory(conv1_prim_desc.dst_desc(), eng);
+
+    const auto start = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < num_repetitions; ++r) {
+        // execute net
+        for (size_t i = 0; i < net.size(); ++i) {
+            net.at(i).execute(s, net_args.at(i));
+        }
+        //TODO copy back
+    }
+    return std::chrono::high_resolution_clock::now() - start;
+}
+
+#endif // DALOTIA_E_WITH_ONEDNN
+
 #ifdef DALOTIA_E_WITH_LIBTORCH
 std::chrono::duration<double> run_inference_libtorch(
     const dalotia::vector<float> &inputs,
@@ -272,6 +348,12 @@ int main(int, char **) {
 #else
     std::cout << "libtorch not enabled" << std::endl;
 #endif  // DALOTIA_E_WITH_LIBTORCH
+
+#ifdef DALOTIA_E_WITH_ONEDNN
+    inference_functions["onednn"] = run_inference_onednn;
+#else
+    std::cout << "onednn not enabled" << std::endl;
+#endif  // DALOTIA_E_WITH_ONEDNN
 
     const size_t num_repetitions = 1;
     dalotia::vector<float> results(expected_output_tensor.size());
