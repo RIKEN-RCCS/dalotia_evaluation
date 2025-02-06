@@ -303,7 +303,7 @@ std::chrono::duration<double> run_inference_onednn(
     auto conv1_adapted_output_md = dnnl::memory::desc({conv1_output_extents}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
     auto conv2_adapted_output_md = dnnl::memory::desc({conv2_output_extents}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
     auto conv3_adapted_output_md = dnnl::memory::desc({conv3_output_extents}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
-    auto conv4_adapted_output_md = dnnl::memory::desc({num_inputs}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
+    auto conv4_adapted_output_md = dnnl::memory::desc({num_inputs, 1, 1, 1, 1}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
 
     auto conv1_prim_desc = dnnl::convolution_forward::primitive_desc(eng,
             dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
@@ -400,6 +400,43 @@ std::chrono::duration<double> run_inference_onednn(
     net_args.push_back({{DNNL_ARG_SRC, conv3_dst_memory},
             {DNNL_ARG_DST, conv3_dst_memory}});
 
+    auto conv4_prim_desc = dnnl::convolution_forward::primitive_desc(eng,
+            dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
+            conv3_dst_memory.get_desc(), conv4_adapted_weights_md,
+            conv4_adapted_bias_md, conv4_adapted_output_md, conv_strides, conv_no_to_padding,
+            conv_no_to_padding);
+    auto conv4_src_memory = conv3_dst_memory;
+    if (conv4_prim_desc.src_desc() != conv3_dst_memory.get_desc()) {
+        conv4_src_memory = dnnl::memory(conv4_prim_desc.src_desc(), eng);
+        net.push_back(dnnl::reorder(conv3_dst_memory, conv4_src_memory));
+        net_args.push_back({{DNNL_ARG_FROM, conv3_dst_memory},
+                {DNNL_ARG_TO, conv4_src_memory}});
+    }
+    auto conv4_weights_memory = conv4_original_weights_memory;
+    if (conv4_prim_desc.weights_desc() != conv4_original_weights_md) {
+        conv4_weights_memory = dnnl::memory(conv4_prim_desc.weights_desc(), eng);
+        dnnl::reorder(conv4_original_weights_memory, conv4_weights_memory)
+                .execute(s, conv4_original_weights_memory, conv4_weights_memory);
+    }
+    auto conv4_dst_memory = dnnl::memory(conv4_prim_desc.dst_desc(), eng);
+    net.push_back(dnnl::convolution_forward(conv4_prim_desc));
+    net_args.push_back({{DNNL_ARG_SRC, conv4_src_memory},
+            {DNNL_ARG_WEIGHTS, conv4_weights_memory},
+            {DNNL_ARG_BIAS, conv4_original_bias_memory},
+            {DNNL_ARG_DST, conv4_dst_memory}});
+
+    auto sigmoid_desc = dnnl::eltwise_forward::primitive_desc(eng, dnnl::prop_kind::forward_inference,
+            dnnl::algorithm::eltwise_logistic, conv4_dst_memory.get_desc(), conv4_dst_memory.get_desc(), 0.0f);
+    net.push_back(dnnl::eltwise_forward(sigmoid_desc));
+    net_args.push_back({{DNNL_ARG_SRC, conv4_dst_memory},
+            {DNNL_ARG_DST, conv4_dst_memory}});
+    
+    auto half_desc = dnnl::eltwise_forward::primitive_desc(eng, dnnl::prop_kind::forward_inference,
+            dnnl::algorithm::eltwise_linear, conv4_dst_memory.get_desc(), conv4_dst_memory.get_desc(), 0.5f);
+    net.push_back(dnnl::eltwise_forward(half_desc));
+    net_args.push_back({{DNNL_ARG_SRC, conv4_dst_memory},
+            {DNNL_ARG_DST, conv4_dst_memory}});
+
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t r = 0; r < num_repetitions; ++r) {
         // execute net
@@ -407,7 +444,7 @@ std::chrono::duration<double> run_inference_onednn(
             net.at(i).execute(s, net_args.at(i));
         }
         // copy back //TODO set output memory same as results
-        auto* output_ptr = static_cast<float*>(conv3_dst_memory.get_data_handle());
+        auto* output_ptr = static_cast<float*>(conv4_dst_memory.get_data_handle());
         results.assign(output_ptr, output_ptr + results.size());
     }
     return std::chrono::high_resolution_clock::now() - start;
@@ -489,6 +526,8 @@ int main(int, char **) {
 
         const auto duration = inference_function(
             input_tensor, input_extents, num_repetitions, results);
+        std::cout << "Duration: " << duration.count() << "s" << std::endl;
+        std::cout << "On average: " << duration.count() / static_cast<float>(num_repetitions) << "s" << std::endl;
         // check correctness of the output
         for (size_t i = 0; i < results.size(); ++i) {
             if (! is_close(results[i], expected_output_tensor[i])) {
@@ -497,8 +536,6 @@ int main(int, char **) {
                 throw std::runtime_error("results != expected_output_tensor");
             }
         }
-        std::cout << "Duration: " << duration.count() << "s" << std::endl;
-        std::cout << "On average: " << duration.count() / static_cast<float>(num_repetitions) << "s" << std::endl;
     }
 
     std::cout << "All benched!" << std::endl;
