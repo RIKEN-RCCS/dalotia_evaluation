@@ -9,6 +9,7 @@ import time
 
 # %%
 from math import prod
+# from icecream import ic
 
 # %%
 import safetensors.torch as st
@@ -226,12 +227,12 @@ if __name__ == "__main__":
 
     if save:
         torch.manual_seed(0) # reproducible "random" input
-    if isinstance(n, DeepRLEddyNet):
-        example_DeepRLEddyNet_forward_input = torch.rand(16**3, 3, 6, 6, 6)
-        example_forward_input = example_DeepRLEddyNet_forward_input
-    elif isinstance(n, SubgridLESNet):
-        example_SubgridLESNet_forward_input = torch.rand(16**3, 10)
-        example_forward_input = example_SubgridLESNet_forward_input
+        if isinstance(n, DeepRLEddyNet):
+            example_DeepRLEddyNet_forward_input = torch.rand(16**3, 3, 6, 6, 6)
+            example_forward_input = example_DeepRLEddyNet_forward_input
+        elif isinstance(n, SubgridLESNet):
+            example_SubgridLESNet_forward_input = torch.rand(16**3, 10)
+            example_forward_input = example_SubgridLESNet_forward_input
 
         eval_function = n.forward
         print(example_forward_input)
@@ -252,4 +253,6 @@ if __name__ == "__main__":
     else:
         assert torch.allclose(result, example_output, atol=1e-6)
 
+# %%
+n.forward(example_forward_input)
 # %%
