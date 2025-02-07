@@ -196,6 +196,8 @@ std::chrono::duration<double> run_inference_slow_loops(
     auto conv2_output_pooled = dalotia::vector<float>(batch_size * 16 * 7 * 7);
     const std::array<int, 4> conv2_output_pooled_extents = {batch_size, 16, 7,
                                                             7};
+    auto conv2_output_pooled_indexer =
+        get_tensor_indexer<4>(conv2_output_pooled_extents);
     const std::array<int, 2> conv2_output_flat_extents = {batch_size,
                                                           16 * 7 * 7};
     const auto conv2_output_flat_indexer =
@@ -220,7 +222,6 @@ std::chrono::duration<double> run_inference_slow_loops(
                   << " num images in batch: " << num_images_in_batch
                   << std::endl;
 
-        // apply first convolution
         // copy data to larger array for zero-padding at the edges
         for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int i = 0; i < 28; ++i) {
@@ -232,6 +233,7 @@ std::chrono::duration<double> run_inference_slow_loops(
                 }
             }
         }
+        // apply first convolution
         for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int k = 0; k < 8; ++k) {
                 for (int i = 1; i < 29; ++i) {
@@ -314,8 +316,6 @@ std::chrono::duration<double> run_inference_slow_loops(
         }
 
         // apply max pooling
-        auto conv2_output_pooled_indexer =
-            get_tensor_indexer<4>(conv2_output_pooled_extents);
         for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int i = 0; i < 7; ++i) {
                 for (int j = 0; j < 7; ++j) {
@@ -820,23 +820,22 @@ int main(int, char **) {
         inference_function;
     std::unordered_map<std::string, inference_function> inference_functions;
 
+    inference_functions["slow_loops"] = run_inference_slow_loops;
 #ifdef DALOTIA_E_WITH_BOOST_MULTI
-    inference_functions["boost_multy"] = run_inference_boost_multi;
+    inference_functions["boost_multi"] = run_inference_boost_multi;
 #else
     std::cout << "BOOST_MULTI not enabled" << std::endl;
 #endif  // DALOTIA_E_WITH_BOOST_MULTI
-// #ifdef DALOTIA_E_WITH_NDIRECT
-//     inference_functions["ndirect"] = run_inference_ndirect;
-// #else
-//     std::cout << "NDIRECT not enabled" << std::endl;
-// #endif  // DALOTIA_E_WITH_NDIRECT
+#ifdef DALOTIA_E_WITH_NDIRECT
+    inference_functions["ndirect"] = run_inference_ndirect;
+#else
+    std::cout << "NDIRECT not enabled" << std::endl;
+#endif  // DALOTIA_E_WITH_NDIRECT
 #ifdef DALOTIA_E_WITH_LIBTORCH
     inference_functions["libtorch"] = run_inference_libtorch;
 #else
     std::cout << "LIBTORCH not enabled" << std::endl;
 #endif  // DALOTIA_E_WITH_LIBTORCH
-
-    inference_functions["slow_loops"] = run_inference_slow_loops;
 
     for (const auto &inference_function_pair : inference_functions) {
         const auto& inference_function = inference_function_pair.second;
@@ -857,11 +856,11 @@ int main(int, char **) {
             }
         }
         assert(num_correct + num_incorrect == total_num_images);
+        std::cout << "Got " << num_correct << "/" << total_num_images
+                  << std::endl;
         if (num_correct != 9862) {
             throw std::runtime_error("num_correct != 9862");
         }
-        std::cout << "Got " << num_correct << "/" << total_num_images
-                  << std::endl;
         std::cout << "Duration: " << duration.count() << "s" << std::endl;
     }
 

@@ -10,8 +10,9 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     real(C_float) :: weight_fc1(10, 6), bias_fc1(6)
 
     ! increment variables
-    integer(kind=int64) :: o, f, start_time, end_time, count_rate
-    integer :: num_inputs
+    integer(kind=int64) :: o, f, i, start_time, end_time, count_rate
+    real(kind=real64) :: duration
+    integer :: num_inputs, num_repetitions = 100
     integer :: num_input_features = size(weight_fc1, 1)
     integer :: num_output_features = size(weight_fc1, 2)
 
@@ -60,6 +61,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call assert_close_f(outputs(1,2), 0.8851)
 
     call system_clock(start_time)
+    do i = 1, num_repetitions
        ! apply fully connected layer
         do o = 1, 4096 !concurrent (o = 1:4096)
           ! fill with bias
@@ -75,10 +77,14 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 
         ! reLU:
         fc1_output = max(0.0, fc1_output)
+    end do
+
     call system_clock(end_time)
     call system_clock(count_rate=count_rate)
 
-    write(*,*) "Duration: ", real(end_time-start_time, kind=real64)/real(count_rate, kind=real64), "s"
+    duration = real(end_time-start_time, kind=real64)/real(count_rate, kind=real64)
+    write(*,*) "Duration: ", duration, "s"
+    write(*,*) "On average: ", duration/real(num_repetitions, kind=real64), "s"
 
   ! compare output
     do o = 1, 4096
