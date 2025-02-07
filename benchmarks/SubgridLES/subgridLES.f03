@@ -7,12 +7,16 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     type(C_ptr) :: dalotia_file_pointer
 
     ! fixed-size input arrays
-    real(C_float) :: inputs(10, 4096), weight_fc1(10, 6), bias_fc1(6), outputs(6, 4096)
-    real(C_float) :: fc1_output(6, 4096)
+    real(C_float) :: weight_fc1(10, 6), bias_fc1(6)
 
     ! increment variables
-    integer(kind=int64) :: o, start_time, end_time, count_rate
-    integer :: num_inputs = size(inputs, 2)
+    integer(kind=int64) :: o, f, start_time, end_time, count_rate
+    integer :: num_inputs
+    integer :: num_input_features = size(weight_fc1, 1)
+    integer :: num_output_features = size(weight_fc1, 2)
+
+    ! allocatable input arrays
+    real(C_float), dimension(:, :), allocatable :: inputs, fc1_output, outputs !TODO allocatable
 
     filename_model = "./weights_SubgridLESNet.safetensors"
     filename_input = "./input_SubgridLESNet.safetensors"
@@ -30,36 +34,44 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call assert_close_f(weight_fc1(10,1), 0.0833)
     call assert_close_f(weight_fc1(1,6), 0.0188)
     call assert_close_f(weight_fc1(10,6), 0.0161)
-    call assert_close_f(bias_fc1(1), 0.2746)
-    call assert_close_f(bias_fc1(6), -0.0343)
+    call assert_close_f(bias_fc1(1), 0.3333)
+    call assert_close_f(bias_fc1(6), 0.1250)
 
     write (*, *) "Loading inputs from ", trim(filename_input)
     dalotia_file_pointer = dalotia_open_file(trim(filename_input))
-    call dalotia_load_tensor(dalotia_file_pointer, "random_input", inputs)
+    call dalotia_load_tensor_dense(dalotia_file_pointer, "random_input", inputs)
     call dalotia_close_file(dalotia_file_pointer)
     write (*, *) "Loading outputs from ", trim(filename_output)
     dalotia_file_pointer = dalotia_open_file(trim(filename_output))
-    call dalotia_load_tensor(dalotia_file_pointer, "output", outputs)
+    call dalotia_load_tensor_dense(dalotia_file_pointer, "output", outputs)
     call dalotia_close_file(dalotia_file_pointer)
+    num_inputs = size(inputs, 2)
+    call assert(size(outputs, 2) == num_inputs)
+    call assert(size(inputs, 1) == num_input_features)
+    call assert(size(outputs, 1) == num_output_features)
+    ! allocate output array the same size as the read one
+    allocate(fc1_output(num_output_features, num_inputs))
 
     call assert_close_f(inputs(1,1), 0.4963)
     call assert_close_f(inputs(2,1), 0.7682)
     call assert_close_f(inputs(1,2), 0.3489)
-    call assert_close_f(outputs(1,1), 1.0331)
-    call assert_close_f(outputs(2,1), 0.0446)
-    call assert_close_f(outputs(1,2), 0.8264)
+    call assert_close_f(outputs(1,1), 1.0919)
+    call assert_close_f(outputs(2,1), 0.5316)
+    call assert_close_f(outputs(1,2), 0.8851)
 
     call system_clock(start_time)
        ! apply fully connected layer
-        do concurrent (o = 1:4096)
+        do o = 1, 4096 !concurrent (o = 1:4096)
           ! fill with bias
           fc1_output(:, o) = bias_fc1(:)
         end do
+        ! this here is more concise but slower: fc1_output = spread(bias_fc1, 2, num_inputs)
 
         ! fc1_output = matmul(transpose(weight_fc1), inputs) + fc1_output
 
-        call sgemm('T', 'N', 6, num_inputs, 10, 1.0, weight_fc1, 10, &
-              inputs, 10,  1.0, fc1_output, 6)
+        call sgemm('T', 'N', num_output_features, num_inputs, num_input_features, 1.0, &
+                  weight_fc1, num_input_features, inputs, num_input_features,  1.0, &
+                  fc1_output, num_output_features)
 
         ! reLU:
         fc1_output = max(0.0, fc1_output)
@@ -70,12 +82,9 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 
   ! compare output
     do o = 1, 4096
-      call assert_close_f(fc1_output(1, o), outputs(1, o))
-      call assert_close_f(fc1_output(2, o), outputs(2, o))
-      call assert_close_f(fc1_output(3, o), outputs(3, o))
-      call assert_close_f(fc1_output(4, o), outputs(4, o))
-      call assert_close_f(fc1_output(5, o), outputs(5, o))
-      call assert_close_f(fc1_output(6, o), outputs(6, o))
+      do f = 1, num_output_features
+        call assert_close_f(fc1_output(f, o), outputs(f, o))
+      end do
     end do
 contains
 
