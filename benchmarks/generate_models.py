@@ -5,6 +5,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import time
 
 # %%
 from math import prod
@@ -22,6 +23,9 @@ def pytorch_layer_init_arange(layer, basis):
     layer.weight = torch.nn.Parameter(1. / torch.arange(start=basis, 
                                                         end=prod(layer.weight.shape) + basis, 
                                                         dtype=layer.weight.dtype).reshape(shape=layer.weight.shape))
+    layer.bias = torch.nn.Parameter(1. / torch.arange(start=basis,
+                                                         end=layer.bias.shape[0] + basis, 
+                                                         dtype=layer.bias.dtype))
 
 # %%
 # https://www.craylabs.org/docs/tutorials/ml_inference/Inference-in-SmartSim.html
@@ -205,25 +209,47 @@ def create_torch_model_file(torch_module, forward_input):
     st.save_file({"output": output}, output_file_name)
     
 
+def load_torch_model_file(torch_module):
+    loaded_net = torch.jit.load("traced_" + torch_module.__class__.__name__ + ".pt")
+    loaded_inputs = st.load_file("input_" + torch_module.__class__.__name__ + ".safetensors")["random_input"]
+    loaded_weights = st.load_model(torch_module, "weights_" + torch_module.__class__.__name__ + ".safetensors")
+    loaded_output = st.load_file("output_" + torch_module.__class__.__name__ + ".safetensors")["output"]
+    return loaded_net, loaded_inputs, loaded_weights, loaded_output
+
 # %%
 if __name__ == "__main__":
     n = SubgridLESNet() # 
     n = DeepRLEddyNet() #DefaultNet()
+    save = True
 
-    n.eval()
+    torch.jit.optimize_for_inference(torch.jit.script(n.eval()))
 
-    torch.manual_seed(0) # reproducible "random" input
+    if save:
+        torch.manual_seed(0) # reproducible "random" input
     if isinstance(n, DeepRLEddyNet):
         example_DeepRLEddyNet_forward_input = torch.rand(16**3, 3, 6, 6, 6)
         example_forward_input = example_DeepRLEddyNet_forward_input
     elif isinstance(n, SubgridLESNet):
-        example_SubgridLESNet_forward_input = torch.rand(64**3, 10)
+        example_SubgridLESNet_forward_input = torch.rand(16**3, 10)
         example_forward_input = example_SubgridLESNet_forward_input
 
-    print(example_forward_input)
+        eval_function = n.forward
+        print(example_forward_input)
+    else:
+        loaded_net, example_forward_input, _, example_output = load_torch_model_file(n)
+        eval_function = loaded_net
 
-    n.forward(example_forward_input)
-
-    create_torch_model_file(n, example_forward_input)
+    num_iterations = 1
+    start = time.perf_counter()
+    for i in range(num_iterations):
+        result = eval_function(example_forward_input)
+    end = time.perf_counter()
+    print(f"Time taken for {num_iterations} iterations: {end - start} seconds")
+    print(f"Average time taken per iteration: {(end - start) / num_iterations} seconds")
+    
+    if save:
+        create_torch_model_file(n, example_forward_input)
+    else:
+        assert torch.allclose(result, example_output, atol=1e-6)
 
 # %%
