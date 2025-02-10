@@ -236,18 +236,35 @@ std::chrono::duration<double> run_inference_onednn(
     dalotia::vector<float> conv2_bias(conv2_weight_extents[0]);
     dalotia::vector<float> conv3_bias(conv3_weight_extents[0]);
     dalotia::vector<float> conv4_bias(conv4_weight_extents[0]);
+    void* conv1_weight_ptr = nullptr;
+    void* conv2_weight_ptr = nullptr;
+    void* conv3_weight_ptr = nullptr;
+    void* conv4_weight_ptr = nullptr;
+    void* conv1_bias_ptr = nullptr;
+    void* conv2_bias_ptr = nullptr;
+    void* conv3_bias_ptr = nullptr;
+    void* conv4_bias_ptr = nullptr;
 
     {
         // open the file only once and close at end of scope
-        dalotia::SafetensorsFile dalotia_file(filename);
-        dalotia_file.load_tensor_dense("conv1.weight", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv1_weight.data()));
-        dalotia_file.load_tensor_dense("conv2.weight", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv2_weight.data()));
-        dalotia_file.load_tensor_dense("conv3.weight", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv3_weight.data()));
-        dalotia_file.load_tensor_dense("conv4.weight", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv4_weight.data()));
-        dalotia_file.load_tensor_dense("conv1.bias", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv1_bias.data()));
-        dalotia_file.load_tensor_dense("conv2.bias", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv2_bias.data()));
-        dalotia_file.load_tensor_dense("conv3.bias", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv3_bias.data()));
-        dalotia_file.load_tensor_dense("conv4.bias", dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering, reinterpret_cast<dalotia_byte*>(conv4_bias.data()));
+        auto dalotia_file_ = std::unique_ptr<dalotia::TensorFile>(dalotia::make_tensor_file(filename));
+        std::vector<int> tensor_extents_dummy;
+        std::tie(tensor_extents_dummy, conv1_weight) = dalotia_file_->load_tensor_dense<float>("conv1.weight");
+        std::tie(tensor_extents_dummy, conv2_weight) = dalotia_file_->load_tensor_dense<float>("conv2.weight");
+        std::tie(tensor_extents_dummy, conv3_weight) = dalotia_file_->load_tensor_dense<float>("conv3.weight");
+        std::tie(tensor_extents_dummy, conv4_weight) = dalotia_file_->load_tensor_dense<float>("conv4.weight");
+        std::tie(tensor_extents_dummy, conv1_bias) = dalotia_file_->load_tensor_dense<float>("conv1.bias");
+        std::tie(tensor_extents_dummy, conv2_bias) = dalotia_file_->load_tensor_dense<float>("conv2.bias");
+        std::tie(tensor_extents_dummy, conv3_bias) = dalotia_file_->load_tensor_dense<float>("conv3.bias");
+        std::tie(tensor_extents_dummy, conv4_bias) = dalotia_file_->load_tensor_dense<float>("conv4.bias");
+        conv1_weight_ptr = reinterpret_cast<void*>(conv1_weight.data());
+        conv2_weight_ptr = reinterpret_cast<void*>(conv2_weight.data());
+        conv3_weight_ptr = reinterpret_cast<void*>(conv3_weight.data());
+        conv4_weight_ptr = reinterpret_cast<void*>(conv4_weight.data());
+        conv1_bias_ptr = reinterpret_cast<void*>(conv1_bias.data());
+        conv2_bias_ptr = reinterpret_cast<void*>(conv2_bias.data());
+        conv3_bias_ptr = reinterpret_cast<void*>(conv3_bias.data());
+        conv4_bias_ptr = reinterpret_cast<void*>(conv4_bias.data());
     }
     // cf. https://github.com/oneapi-src/oneDNN/blob/main/examples/cnn_inference_f32.cpp
     const dnnl::engine::kind engine_kind = dnnl::engine::kind::cpu;
@@ -282,15 +299,16 @@ std::chrono::duration<double> run_inference_onednn(
     auto conv3_original_bias_md = dnnl::memory::desc({conv3_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
     auto conv4_original_bias_md = dnnl::memory::desc({conv4_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
 
-    auto original_input_memory = dnnl::memory({{input_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::ncdhw}, eng, reinterpret_cast<void*>(const_cast<float*>(input_tensor.data())));
-    auto conv1_original_weights_memory = dnnl::memory(conv1_original_weights_md, eng, reinterpret_cast<void*>(conv1_weight.data()));
-    auto conv2_original_weights_memory = dnnl::memory(conv2_original_weights_md, eng, reinterpret_cast<void*>(conv2_weight.data()));
-    auto conv3_original_weights_memory = dnnl::memory(conv3_original_weights_md, eng, reinterpret_cast<void*>(conv3_weight.data()));
-    auto conv4_original_weights_memory = dnnl::memory(conv4_original_weights_md, eng, reinterpret_cast<void*>(conv4_weight.data()));
-    auto conv1_original_bias_memory = dnnl::memory(conv1_original_bias_md, eng, reinterpret_cast<void*>(conv1_bias.data()));
-    auto conv2_original_bias_memory = dnnl::memory(conv2_original_bias_md, eng, reinterpret_cast<void*>(conv2_bias.data()));
-    auto conv3_original_bias_memory = dnnl::memory(conv3_original_bias_md, eng, reinterpret_cast<void*>(conv3_bias.data()));
-    auto conv4_original_bias_memory = dnnl::memory(conv4_original_bias_md, eng, reinterpret_cast<void*>(conv4_bias.data()));
+    auto original_input_memory = dnnl::memory({{input_tz}, dnnl::memory::data_type::f32, 
+        dnnl::memory::format_tag::ncdhw}, eng, reinterpret_cast<void*>(const_cast<float*>(input_tensor.data())));
+    auto conv1_original_weights_memory = dnnl::memory(conv1_original_weights_md, eng, conv1_weight_ptr);
+    auto conv2_original_weights_memory = dnnl::memory(conv2_original_weights_md, eng, conv2_weight_ptr);
+    auto conv3_original_weights_memory = dnnl::memory(conv3_original_weights_md, eng, conv3_weight_ptr);
+    auto conv4_original_weights_memory = dnnl::memory(conv4_original_weights_md, eng, conv4_weight_ptr);
+    auto conv1_original_bias_memory = dnnl::memory(conv1_original_bias_md, eng, conv1_bias_ptr);
+    auto conv2_original_bias_memory = dnnl::memory(conv2_original_bias_md, eng, conv2_bias_ptr);
+    auto conv3_original_bias_memory = dnnl::memory(conv3_original_bias_md, eng, conv3_bias_ptr);
+    auto conv4_original_bias_memory = dnnl::memory(conv4_original_bias_md, eng, conv4_bias_ptr);
 
     auto adapted_input_md = dnnl::memory::desc({input_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
     auto conv1_adapted_weights_md = dnnl::memory::desc({conv1_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
