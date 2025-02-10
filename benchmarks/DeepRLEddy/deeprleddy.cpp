@@ -21,7 +21,7 @@
 #include <oneapi/dnnl/dnnl_debug.h>
 #endif  // DALOTIA_E_WITH_ONEDNN
 
-std::tuple<dalotia::vector<int>, dalotia::vector<float>, dalotia::vector<int>, dalotia::vector<float>> test_load(
+std::tuple<std::vector<int>, dalotia::vector<float>, std::vector<int>, dalotia::vector<float>> test_load(
     std::string filename, std::string layer_name) {
     std::string tensor_name_weight = layer_name + ".weight";
     std::string tensor_name_bias = layer_name + ".bias";
@@ -139,7 +139,7 @@ void conv3d_with_relu_naive(
 
 std::chrono::duration<double> run_inference_slow_loops(
     const dalotia::vector<float> &input_tensor,
-    const dalotia::vector<int> &input_extents,
+    const std::vector<int> &input_extents,
     size_t num_repetitions,
     dalotia::vector<float> &results){
 
@@ -223,7 +223,7 @@ std::chrono::duration<double> run_inference_slow_loops(
 #ifdef DALOTIA_E_WITH_ONEDNN
 std::chrono::duration<double> run_inference_onednn(
     const dalotia::vector<float> &input_tensor,
-    const dalotia::vector<int> &input_extents,
+    const std::vector<int> &input_extents,
     size_t num_repetitions,
     dalotia::vector<float> &results) {
 
@@ -456,7 +456,7 @@ std::chrono::duration<double> run_inference_onednn(
 #ifdef DALOTIA_E_WITH_LIBTORCH
 std::chrono::duration<double> run_inference_libtorch(
     const dalotia::vector<float> &inputs,
-    const dalotia::vector<int> &input_extents,
+    const std::vector<int> &input_extents,
     size_t num_repetitions,
     dalotia::vector<float> &results) {
 
@@ -498,7 +498,7 @@ int main(int, char **) {
 
     typedef std::function<std::chrono::duration<double>(
         const dalotia::vector<float> &input_tensor,
-        const dalotia::vector<int> &input_extents,
+        const std::vector<int> &input_extents,
         size_t num_repetitions,
         dalotia::vector<float> &results)>
         inference_function;
