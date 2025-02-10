@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <chrono>
 #include <cstring>  // std::memset
 #include <iostream>
