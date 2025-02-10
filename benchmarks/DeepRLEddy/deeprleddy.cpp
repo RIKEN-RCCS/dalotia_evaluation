@@ -228,14 +228,14 @@ std::chrono::duration<double> run_inference_onednn(
     dalotia::vector<float> &results) {
 
     std::string filename = "./weights_DeepRLEddyNet.safetensors";
-    dalotia::vector<float> conv1_weight(std::accumulate(conv1_weight_extents.begin(), conv1_weight_extents.end(), 1, std::multiplies<int>()));
-    dalotia::vector<float> conv2_weight(std::accumulate(conv2_weight_extents.begin(), conv2_weight_extents.end(), 1, std::multiplies<int>()));
-    dalotia::vector<float> conv3_weight(std::accumulate(conv3_weight_extents.begin(), conv3_weight_extents.end(), 1, std::multiplies<int>()));
-    dalotia::vector<float> conv4_weight(std::accumulate(conv4_weight_extents.begin(), conv4_weight_extents.end(), 1, std::multiplies<int>()));
-    dalotia::vector<float> conv1_bias(conv1_weight_extents[0]);
-    dalotia::vector<float> conv2_bias(conv2_weight_extents[0]);
-    dalotia::vector<float> conv3_bias(conv3_weight_extents[0]);
-    dalotia::vector<float> conv4_bias(conv4_weight_extents[0]);
+    dalotia::vector<float> conv1_weight;
+    dalotia::vector<float> conv2_weight;
+    dalotia::vector<float> conv3_weight;
+    dalotia::vector<float> conv4_weight;
+    dalotia::vector<float> conv1_bias;
+    dalotia::vector<float> conv2_bias;
+    dalotia::vector<float> conv3_bias;
+    dalotia::vector<float> conv4_bias;
     void* conv1_weight_ptr = nullptr;
     void* conv2_weight_ptr = nullptr;
     void* conv3_weight_ptr = nullptr;
@@ -245,7 +245,22 @@ std::chrono::duration<double> run_inference_onednn(
     void* conv3_bias_ptr = nullptr;
     void* conv4_bias_ptr = nullptr;
 
-    {
+    bool use_raw_mmap_pointer = true; // to avoid another copy of tensors
+    auto dalotia_file = std::unique_ptr<dalotia::TensorFile>(nullptr);
+    if (use_raw_mmap_pointer) {
+        // open the file but leave open until end of function so that
+        // mmap pointers remain valid
+        dalotia_file = std::move(std::unique_ptr<dalotia::TensorFile>(dalotia::make_tensor_file(filename)));
+        // sorry for casting away const again
+        conv1_weight_ptr = reinterpret_cast<void*>(const_cast<dalotia_byte*>(dalotia_file->get_mmap_tensor_pointers("conv1.weight")[0]));
+        conv2_weight_ptr = reinterpret_cast<void*>(const_cast<dalotia_byte*>(dalotia_file->get_mmap_tensor_pointers("conv2.weight")[0]));
+        conv3_weight_ptr = reinterpret_cast<void*>(const_cast<dalotia_byte*>(dalotia_file->get_mmap_tensor_pointers("conv3.weight")[0]));
+        conv4_weight_ptr = reinterpret_cast<void*>(const_cast<dalotia_byte*>(dalotia_file->get_mmap_tensor_pointers("conv4.weight")[0]));
+        conv1_bias_ptr = reinterpret_cast<void*>(const_cast<dalotia_byte*>(dalotia_file->get_mmap_tensor_pointers("conv1.bias")[0]));
+        conv2_bias_ptr = reinterpret_cast<void*>(const_cast<dalotia_byte*>(dalotia_file->get_mmap_tensor_pointers("conv2.bias")[0]));
+        conv3_bias_ptr = reinterpret_cast<void*>(const_cast<dalotia_byte*>(dalotia_file->get_mmap_tensor_pointers("conv3.bias")[0]));
+        conv4_bias_ptr = reinterpret_cast<void*>(const_cast<dalotia_byte*>(dalotia_file->get_mmap_tensor_pointers("conv4.bias")[0]));
+    } else {
         // open the file only once and close at end of scope
         auto dalotia_file_ = std::unique_ptr<dalotia::TensorFile>(dalotia::make_tensor_file(filename));
         std::vector<int> tensor_extents_dummy;
