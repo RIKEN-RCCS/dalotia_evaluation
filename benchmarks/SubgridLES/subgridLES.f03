@@ -12,7 +12,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     ! increment variables
     integer(kind=int64) :: o, f, i, start_time, end_time, count_rate
     real(kind=real64) :: duration
-    integer :: num_inputs, num_repetitions = 100
+    integer :: num_inputs, num_repetitions = 1000
     integer :: num_input_features = size(weight_fc1, 1)
     integer :: num_output_features = size(weight_fc1, 2)
 

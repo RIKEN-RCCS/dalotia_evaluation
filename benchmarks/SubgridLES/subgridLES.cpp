@@ -20,9 +20,9 @@ void assert_close(float a, float b, float tol = 1e-4) {
 
 std::chrono::duration<double> run_inference_libtorch(
     const dalotia::vector<float> &inputs,
-    const dalotia::vector<int> &input_sizes,
+    const std::vector<int> &input_sizes,
     size_t num_repetitions,
-    const dalotia::vector<int> &output_sizes,
+    const std::vector<int> &output_sizes,
     dalotia::vector<float> &results) {
     constexpr size_t batch_size = 64;
 
@@ -54,7 +54,7 @@ int main(int, char **) {
     std::string filename = "./weights_SubgridLESNet.safetensors";
 
     // unpermuted for now
-    auto [input_extents, input_tensor] =dalotia::load_tensor_dense<float>("./input_SubgridLESNet.safetensors", "random_input",
+    auto [input_extents, input_tensor] = dalotia::load_tensor_dense<float>("./input_SubgridLESNet.safetensors", "random_input",
                                           dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering);
     assert(input_extents == std::vector<int>({4096, 10}));
     assert_close(input_tensor[0], 0.4963);
@@ -68,7 +68,7 @@ int main(int, char **) {
     assert_close(expected_output_tensor[1], 0.0446);
     assert_close(expected_output_tensor[6], 0.8264);
     
-    const size_t num_repetitions = 1;
+    const size_t num_repetitions = 1000;
     dalotia::vector<float> results(expected_output_tensor.size());
     std::cout << "Running inference with libtorch" << std::endl;
     const auto duration = run_inference_libtorch(input_tensor, input_extents, num_repetitions, output_extents, results);

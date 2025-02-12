@@ -551,7 +551,7 @@ int main(int, char **) {
     std::cout << "onednn not enabled" << std::endl;
 #endif  // DALOTIA_E_WITH_ONEDNN
 
-    const size_t num_repetitions = 1;
+    const size_t num_repetitions = 1000;
     dalotia::vector<float> results(expected_output_tensor.size());
     for (const auto &inference_function_pair : inference_functions) {
         const auto& inference_function = inference_function_pair.second;
