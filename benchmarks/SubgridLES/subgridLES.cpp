@@ -24,8 +24,6 @@ std::chrono::duration<double> run_inference_libtorch(
     size_t num_repetitions,
     const std::vector<int> &output_sizes,
     dalotia::vector<float> &results) {
-    constexpr size_t batch_size = 64;
-
     torch::jit::script::Module module = torch::jit::load("traced_SubgridLESNet.pt");
     module = torch::jit::optimize_for_inference(module);
 
@@ -48,28 +46,50 @@ std::chrono::duration<double> run_inference_libtorch(
     return std::chrono::high_resolution_clock::now() - start;
 }
 
-int main(int, char **) {
-    // load all weights, biases, input, and output
+int main(int argc, char *argv[]) {
+    int num_inputs = 16*16*16;
+    if (argc > 1) {
+        num_inputs = std::stoi(argv[1]);
+    }
+#ifdef DALOTIA_E_FOR_MEMORY_TRACE
+    std::vector<int> input_extents = {num_inputs, 10};
+    std::vector<int> output_extents = {num_inputs, 6};
+    dalotia::vector<float> input_tensor(num_inputs * 10);
+#else
+    // load input and output
     // the data used here is generated with generate_models.py
-    std::string filename = "./weights_SubgridLESNet.safetensors";
-
-    // unpermuted for now
     auto [input_extents, input_tensor] = dalotia::load_tensor_dense<float>("./input_SubgridLESNet.safetensors", "random_input",
                                           dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering);
-    assert(input_extents == std::vector<int>({4096, 10}));
+    assert(input_extents == std::vector<int>({16*16*16, 10}));
     assert_close(input_tensor[0], 0.4963);
     assert_close(input_tensor[1], 0.7682);
     assert_close(input_tensor[10], 0.3489);
-#ifdef DALOTIA_E_FOR_MEMORY_TRACE
-    std::vector<int> output_extents {input_extents[0], 6};
-#else
     auto [output_extents, expected_output_tensor] =
         dalotia::load_tensor_dense<float>("./output_SubgridLESNet.safetensors", "output",
                                           dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering);
-    assert(output_extents == std::vector<int>({4096, 6}));
+    assert(output_extents == std::vector<int>({16*16*16, 6}));
     assert_close(expected_output_tensor[0], 1.0331);
     assert_close(expected_output_tensor[1], 0.0446);
     assert_close(expected_output_tensor[6], 0.8264);
+
+    // if the desired input length is different, we need to truncate or repeat the input tensor
+    if (input_extents[0] != num_inputs) {
+        std::cout << "Resizing input/output tensor from " << input_extents[0] << " to " << num_inputs << std::endl;
+        size_t initial_input_size = input_tensor.size();
+        input_tensor.resize(num_inputs * 10);
+        input_extents[0] = num_inputs;
+        size_t initial_output_size = expected_output_tensor.size();
+        expected_output_tensor.resize(num_inputs *6);
+        output_extents[0] = num_inputs;
+        if (input_tensor.size() > initial_input_size) {
+            for (size_t i = initial_input_size; i < input_tensor.size(); ++i) {
+                input_tensor[i] = input_tensor[i % initial_input_size];
+            }
+            for (size_t i = initial_output_size; i < expected_output_tensor.size(); ++i) {
+                expected_output_tensor[i] = expected_output_tensor[i % initial_output_size];
+            }
+        }
+    }
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
 
 #ifdef DALOTIA_E_FOR_MEMORY_TRACE

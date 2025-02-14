@@ -511,19 +511,23 @@ std::chrono::duration<double> run_inference_libtorch(
 }
 #endif  // DALOTIA_E_WITH_LIBTORCH
 
-int main(int, char **) {
+int main(int argc, char *argv[]) {
+    int num_inputs = 16*16*16;
+    if (argc > 1) {
+        num_inputs = std::stoi(argv[1]);
+    }
+#ifdef DALOTIA_E_FOR_MEMORY_TRACE
+    std::vector<int> input_extents = {num_inputs, 3, 6, 6, 6};
+    std::vector<int> output_extents(1, num_inputs);
+    dalotia::vector<float> input_tensor(num_inputs * 3 * 6 * 6 * 6);
+#else
     // the data used here is generated with generate_models.py
-
-    // unpermuted for now
-    auto [input_extents, input_tensor] =dalotia::load_tensor_dense<float>("./input_DeepRLEddyNet.safetensors", "random_input",
+    auto [input_extents, input_tensor] = dalotia::load_tensor_dense<float>("./input_DeepRLEddyNet.safetensors", "random_input",
                                           dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering);
     assert(input_extents == std::vector<int>({16*16*16, 3, 6, 6, 6}));
     assert_close(input_tensor[0], 4.9626e-01);
     assert_close(input_tensor[1], 7.6822e-01);
     assert_close(input_tensor[input_tensor.size() - 1], 7.8506e-01);
-#ifdef DALOTIA_E_FOR_MEMORY_TRACE 
-    auto output_extents = std::vector<int>(1, 16*16*16);
-#else
     auto [output_extents, expected_output_tensor] =
         dalotia::load_tensor_dense<float>("./output_DeepRLEddyNet.safetensors", "output",
                                           dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering);
@@ -531,6 +535,25 @@ int main(int, char **) {
     assert_close(expected_output_tensor[0], 0.4487);
     assert_close(expected_output_tensor[1], 0.4471);
     assert_close(expected_output_tensor[4095], 0.4541);
+
+    // if the desired input length is different, we need to truncate or repeat the input tensor
+    if (input_extents[0] != num_inputs) {
+        std::cout << "Resizing input/output tensor from " << input_extents[0] << " to " << num_inputs << std::endl;
+        size_t initial_input_size = input_tensor.size();
+        input_tensor.resize(num_inputs * 3 * 6 * 6 * 6);
+        input_extents[0] = num_inputs;
+        size_t initial_output_size = expected_output_tensor.size();
+        expected_output_tensor.resize(num_inputs);
+        output_extents[1] = num_inputs;
+        if (input_tensor.size() > initial_input_size) {
+            for (size_t i = initial_input_size; i < input_tensor.size(); ++i) {
+                input_tensor[i] = input_tensor[i % initial_input_size];
+            }
+            for (size_t i = initial_output_size; i < expected_output_tensor.size(); ++i) {
+                expected_output_tensor[i] = expected_output_tensor[i % initial_output_size];
+            }
+        }
+    }
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
 
     typedef std::function<std::chrono::duration<double>(
@@ -559,7 +582,7 @@ int main(int, char **) {
 #else
     const size_t num_repetitions = 1000;
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
-    dalotia::vector<float> results(expected_output_tensor.size());
+    dalotia::vector<float> results(num_inputs);
     for (const auto &inference_function_pair : inference_functions) {
         const auto& inference_function = inference_function_pair.second;
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
