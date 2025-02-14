@@ -3,15 +3,24 @@ if (DALOTIA_E_WITH_LIBTORCH)
     target_link_libraries( subgridLES_cpp PUBLIC dalotia_cpp )
     target_link_libraries(subgridLES_cpp PRIVATE "${TORCH_LIBRARIES}")
     add_dependencies( subgridLES_cpp torch )
+    if (DALOTIA_E_FOR_MEMORY_TRACE)
+        target_compile_definitions(subgridLES_cpp PRIVATE DALOTIA_E_FOR_MEMORY_TRACE)
+    endif()
 endif(DALOTIA_E_WITH_LIBTORCH)
 
 if (DALOTIA_E_WITH_FORTRAN)
     add_executable( subgridLES_fortran subgridLES.f03 )
-    # add sources
+    set_source_files_properties(
+      subgridLES.f03
+      PROPERTIES Fortran_PREPROCESS ON
+    )
     target_include_directories( subgridLES_fortran PUBLIC $<TARGET_PROPERTY:dalotia_fortran,Fortran_MODULE_DIRECTORY>)
     set_target_properties(subgridLES_fortran PROPERTIES LINKER_LANGUAGE Fortran)
     target_link_libraries(subgridLES_fortran PRIVATE BLAS::BLAS)
     target_link_libraries( subgridLES_fortran PUBLIC dalotia_fortran )
+    if (DALOTIA_E_FOR_MEMORY_TRACE)
+        target_compile_definitions(subgridLES_fortran PRIVATE DALOTIA_E_FOR_MEMORY_TRACE)
+    endif()
 endif (DALOTIA_E_WITH_FORTRAN)
 
 if (OpenMP_CXX_FOUND)

@@ -521,6 +521,9 @@ int main(int, char **) {
     assert_close(input_tensor[0], 4.9626e-01);
     assert_close(input_tensor[1], 7.6822e-01);
     assert_close(input_tensor[input_tensor.size() - 1], 7.8506e-01);
+#ifdef DALOTIA_E_FOR_MEMORY_TRACE 
+    auto output_extents = std::vector<int>(1, 16*16*16);
+#else
     auto [output_extents, expected_output_tensor] =
         dalotia::load_tensor_dense<float>("./output_DeepRLEddyNet.safetensors", "output",
                                           dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering);
@@ -528,6 +531,7 @@ int main(int, char **) {
     assert_close(expected_output_tensor[0], 0.4487);
     assert_close(expected_output_tensor[1], 0.4471);
     assert_close(expected_output_tensor[4095], 0.4541);
+#endif // DALOTIA_E_FOR_MEMORY_TRACE
 
     typedef std::function<std::chrono::duration<double>(
         const dalotia::vector<float> &input_tensor,
@@ -550,16 +554,22 @@ int main(int, char **) {
 #else
     std::cout << "onednn not enabled" << std::endl;
 #endif  // DALOTIA_E_WITH_ONEDNN
-
+#ifdef DALOTIA_E_FOR_MEMORY_TRACE // plus comment out above the parts I don't want to measure w/ pinatrace
+    const size_t num_repetitions = 1;
+#else
     const size_t num_repetitions = 1000;
+#endif // DALOTIA_E_FOR_MEMORY_TRACE
     dalotia::vector<float> results(expected_output_tensor.size());
     for (const auto &inference_function_pair : inference_functions) {
         const auto& inference_function = inference_function_pair.second;
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
         std::cout << "Running inference with " << inference_function_pair.first << std::endl;
         std::memset(results.data(), 0, results.size() * sizeof(int));
+#endif // not DALOTIA_E_FOR_MEMORY_TRACE
 
         const auto duration = inference_function(
             input_tensor, input_extents, num_repetitions, results);
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
         std::cout << "Duration: " << duration.count() << "s" << std::endl;
         std::cout << "On average: " << duration.count() / static_cast<float>(num_repetitions) << "s" << std::endl;
         // check correctness of the output
@@ -570,9 +580,11 @@ int main(int, char **) {
                 throw std::runtime_error("results != expected_output_tensor");
             }
         }
+#endif // not DALOTIA_E_FOR_MEMORY_TRACE
     }
-
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
     std::cout << "All benched!" << std::endl;
+#endif // not DALOTIA_E_FOR_MEMORY_TRACE
 
     return 0;
 }

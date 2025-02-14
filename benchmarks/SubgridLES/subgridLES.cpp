@@ -60,6 +60,9 @@ int main(int, char **) {
     assert_close(input_tensor[0], 0.4963);
     assert_close(input_tensor[1], 0.7682);
     assert_close(input_tensor[10], 0.3489);
+#ifdef DALOTIA_E_FOR_MEMORY_TRACE
+    std::vector<int> output_extents {input_extents[0], 6};
+#else
     auto [output_extents, expected_output_tensor] =
         dalotia::load_tensor_dense<float>("./output_SubgridLESNet.safetensors", "output",
                                           dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering);
@@ -67,11 +70,17 @@ int main(int, char **) {
     assert_close(expected_output_tensor[0], 1.0331);
     assert_close(expected_output_tensor[1], 0.0446);
     assert_close(expected_output_tensor[6], 0.8264);
-    
+#endif // DALOTIA_E_FOR_MEMORY_TRACE
+
+#ifdef DALOTIA_E_FOR_MEMORY_TRACE
+    const size_t num_repetitions = 1;
+#else // DALOTIA_E_FOR_MEMORY_TRACE
     const size_t num_repetitions = 1000;
-    dalotia::vector<float> results(expected_output_tensor.size());
     std::cout << "Running inference with libtorch" << std::endl;
+#endif // DALOTIA_E_FOR_MEMORY_TRACE
+    dalotia::vector<float> results(input_extents[0] * 6);
     const auto duration = run_inference_libtorch(input_tensor, input_extents, num_repetitions, output_extents, results);
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
     std::cout << "Duration: " << duration.count() << "s" << std::endl;
     std::cout << "On average: " << duration.count() / static_cast<float>(num_repetitions) << "s" << std::endl;
 
@@ -83,6 +92,7 @@ int main(int, char **) {
             throw std::runtime_error("results != expected_output_tensor");
         }
     }
+#endif // not DALOTIA_E_FOR_MEMORY_TRACE
 
     return 0;
 }

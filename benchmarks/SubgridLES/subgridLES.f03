@@ -12,13 +12,18 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     ! increment variables
     integer(kind=int64) :: o, f, i, start_time, end_time, count_rate
     real(kind=real64) :: duration
-    integer :: num_inputs, num_repetitions = 1000
+    integer :: num_inputs, num_repetitions
     integer :: num_input_features = size(weight_fc1, 1)
     integer :: num_output_features = size(weight_fc1, 2)
 
     ! allocatable input arrays
     real(C_float), dimension(:, :), allocatable :: inputs, fc1_output, outputs !TODO allocatable
 
+#ifdef DALOTIA_E_FOR_MEMORY_TRACE
+    num_repetitions = 1
+#else
+    num_repetitions = 1000
+#endif ! DALOTIA_E_FOR_MEMORY_TRACE
     filename_model = "./weights_SubgridLESNet.safetensors"
     filename_input = "./input_SubgridLESNet.safetensors"
     filename_output = "./output_SubgridLESNet.safetensors"
@@ -42,23 +47,25 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     dalotia_file_pointer = dalotia_open_file(trim(filename_input))
     call dalotia_load_tensor_dense(dalotia_file_pointer, "random_input", inputs)
     call dalotia_close_file(dalotia_file_pointer)
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
     write (*, *) "Loading outputs from ", trim(filename_output)
     dalotia_file_pointer = dalotia_open_file(trim(filename_output))
     call dalotia_load_tensor_dense(dalotia_file_pointer, "output", outputs)
     call dalotia_close_file(dalotia_file_pointer)
-    num_inputs = size(inputs, 2)
+    call assert_close_f(outputs(1,1), 1.0919)
+    call assert_close_f(outputs(2,1), 0.5316)
+    call assert_close_f(outputs(1,2), 0.8851)
     call assert(size(outputs, 2) == num_inputs)
-    call assert(size(inputs, 1) == num_input_features)
     call assert(size(outputs, 1) == num_output_features)
+#endif ! not DALOTIA_E_FOR_MEMORY_TRACE
+    num_inputs = size(inputs, 2)
+    call assert(size(inputs, 1) == num_input_features)
     ! allocate output array the same size as the read one
     allocate(fc1_output(num_output_features, num_inputs))
 
     call assert_close_f(inputs(1,1), 0.4963)
     call assert_close_f(inputs(2,1), 0.7682)
     call assert_close_f(inputs(1,2), 0.3489)
-    call assert_close_f(outputs(1,1), 1.0919)
-    call assert_close_f(outputs(2,1), 0.5316)
-    call assert_close_f(outputs(1,2), 0.8851)
 
     call system_clock(start_time)
     do i = 1, num_repetitions
@@ -67,8 +74,8 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
           ! fill with bias
           fc1_output(:, o) = bias_fc1(:)
         end do
-        ! this here is more concise but slower: fc1_output = spread(bias_fc1, 2, num_inputs)
-
+        ! this here is more concise but slower: 
+        ! fc1_output = spread(bias_fc1, 2, num_inputs)
         ! fc1_output = matmul(transpose(weight_fc1), inputs) + fc1_output
 
         call sgemm('T', 'N', num_output_features, num_inputs, num_input_features, 1.0, &
@@ -83,6 +90,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call system_clock(count_rate=count_rate)
 
     duration = real(end_time-start_time, kind=real64)/real(count_rate, kind=real64)
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
     write(*,*) "Duration: ", duration, "s"
     write(*,*) "On average: ", duration/real(num_repetitions, kind=real64), "s"
 
@@ -92,6 +100,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
         call assert_close_f(fc1_output(f, o), outputs(f, o))
       end do
     end do
+#endif ! not DALOTIA_E_FOR_MEMORY_TRACE
 contains
 
 !cf. https://stackoverflow.com/a/55376595

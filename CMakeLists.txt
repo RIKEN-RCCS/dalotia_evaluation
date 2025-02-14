@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(dalotia_evaluation)
 
+option(DALOTIA_E_FOR_MEMORY_TRACE "avoid output and checks to run memory usage profile (pinatrace)" OFF)
 option(DALOTIA_E_WITH_BOOST_MULTI "include boost::multi for tensor operations" OFF)
 option(DALOTIA_E_WITH_NDIRECT "include ndirect for convolution operations on ARM" OFF)
 option(DALOTIA_E_WITH_LIBTORCH "include libtorch for jitted tensor operations" OFF)
