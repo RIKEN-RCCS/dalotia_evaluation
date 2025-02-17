@@ -8,6 +8,18 @@
 
 #include <torch/script.h> // this exec is only built with libtorch
 
+#ifdef LIKWID_PERFMON
+#include <likwid-marker.h>
+#else
+#define LIKWID_MARKER_INIT
+#define LIKWID_MARKER_THREADINIT
+#define LIKWID_MARKER_SWITCH
+#define LIKWID_MARKER_REGISTER(regionTag)
+#define LIKWID_MARKER_START(regionTag)
+#define LIKWID_MARKER_STOP(regionTag)
+#define LIKWID_MARKER_CLOSE
+#define LIKWID_MARKER_GET(regionTag, nevents, events, time, count)
+#endif  // LIKWID_PERFMON
 
 void assert_close(float a, float b, float tol = 1e-4) {
 #ifndef NDEBUG
@@ -27,12 +39,13 @@ std::chrono::duration<double> run_inference_libtorch(
     torch::jit::script::Module module = torch::jit::load("traced_SubgridLESNet.pt");
     module = torch::jit::optimize_for_inference(module);
 
-    const auto start = std::chrono::high_resolution_clock::now();
     // todo keep const semantics on input -> seems that's not a thing in libtorch
     const auto input_tensor = torch::from_blob(
             reinterpret_cast<void*>(const_cast<float*>(inputs.data())), 
             at::IntArrayRef({input_sizes[0], input_sizes[1]})
         );
+    LIKWID_MARKER_START("libtorch");
+    const auto start = std::chrono::high_resolution_clock::now();
     // If I can't figure out how to pass the output address to forward(), then most other people also won't 
     // auto output_tensor = torch::from_blob(
     //         reinterpret_cast<void*>(results.data()), 
@@ -43,6 +56,7 @@ std::chrono::duration<double> run_inference_libtorch(
         // assign to output
         std::memcpy(results.data(), output_tensor.data_ptr(), output_tensor.numel() * sizeof(float));
     }
+    LIKWID_MARKER_STOP("libtorch");
     return std::chrono::high_resolution_clock::now() - start;
 }
 
@@ -99,7 +113,10 @@ int main(int argc, char *argv[]) {
     std::cout << "Running inference with libtorch" << std::endl;
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
     dalotia::vector<float> results(input_extents[0] * 6);
+    LIKWID_MARKER_INIT;
+    LIKWID_MARKER_REGISTER("libtorch");    
     const auto duration = run_inference_libtorch(input_tensor, input_extents, num_repetitions, output_extents, results);
+    LIKWID_MARKER_CLOSE;
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
     std::cout << "Duration: " << duration.count() << "s" << std::endl;
     std::cout << "On average: " << duration.count() / static_cast<float>(num_repetitions) << "s" << std::endl;

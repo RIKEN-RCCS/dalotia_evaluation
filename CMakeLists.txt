@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.24)
 project(dalotia_evaluation)
 
 option(DALOTIA_E_FOR_MEMORY_TRACE "avoid output and checks to run memory usage profile (pinatrace)" OFF)
+option(DALOTIA_E_WITH_LIKWID_MARKERS "instrument inference stages with likwid perfmon" OFF)
 option(DALOTIA_E_WITH_BOOST_MULTI "include boost::multi for tensor operations" OFF)
 option(DALOTIA_E_WITH_NDIRECT "include ndirect for convolution operations on ARM" OFF)
 option(DALOTIA_E_WITH_LIBTORCH "include libtorch for jitted tensor operations" OFF)
@@ -33,7 +34,7 @@ FetchContent_MakeAvailable(dalotia)
 FetchContent_GetProperties(dalotia SOURCE_DIR DALOTIA_CPP_INCLUDE_DIR BINARY_DIR DALOTIA_CPP_LIBRARY)
 message(STATUS "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
 message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
-find_package(dalotia)
+find_package(dalotia REQUIRED)
 if(DALOTIA_E_WITH_LIBTORCH)
   # the default pip-downloaded libtorch is built with CXX11_ABI=0 -> to use it everything else needs that too
   set(DALOTIA_E_USE_OLD_ABI ON)
@@ -66,6 +67,10 @@ if (NOT BLAS_INCLUDE_DIRS OR BLAS_INCLUDE_DIRS STREQUAL "")
 endif()
 
 # optional / conditional dependencies
+if (DALOTIA_E_WITH_LIKWID_MARKERS)
+  find_package(likwid REQUIRED)
+endif (DALOTIA_E_WITH_LIKWID_MARKERS)
+
 if (DALOTIA_E_WITH_NDIRECT)
   include(ExternalProject)
   ExternalProject_Add(

@@ -21,6 +21,19 @@
 #include <oneapi/dnnl/dnnl_debug.h>
 #endif  // DALOTIA_E_WITH_ONEDNN
 
+#ifdef LIKWID_PERFMON
+#include <likwid-marker.h>
+#else
+#define LIKWID_MARKER_INIT
+#define LIKWID_MARKER_THREADINIT
+#define LIKWID_MARKER_SWITCH
+#define LIKWID_MARKER_REGISTER(regionTag)
+#define LIKWID_MARKER_START(regionTag)
+#define LIKWID_MARKER_STOP(regionTag)
+#define LIKWID_MARKER_CLOSE
+#define LIKWID_MARKER_GET(regionTag, nevents, events, time, count)
+#endif  // LIKWID_PERFMON
+
 std::tuple<std::vector<int>, dalotia::vector<float>, std::vector<int>, dalotia::vector<float>> test_load(
     std::string filename, std::string layer_name) {
     std::string tensor_name_weight = layer_name + ".weight";
@@ -178,8 +191,9 @@ std::chrono::duration<double> run_inference_slow_loops(
         get_tensor_indexer<5>(conv3_output_extents);
     auto conv4_output = dalotia::vector<float>(num_inputs);
 
+    LIKWID_MARKER_START("slow_loops");
     const auto start = std::chrono::high_resolution_clock::now();
-    for (size_t batch_index = 0; batch_index < num_repetitions; ++batch_index) {
+    for (size_t r = 0; r < num_repetitions; ++r) {
         // copy data to larger array for zero-padding at the edges
         for (int o = 0; o < num_inputs; ++o) {
             for (int c = 0; c < 3; ++c) {
@@ -217,6 +231,7 @@ std::chrono::duration<double> run_inference_slow_loops(
             results[o] = 0.5 * 1. / (1. + std::exp(-value));
         }
     }
+    LIKWID_MARKER_STOP("slow_loops");
     return std::chrono::high_resolution_clock::now() - start;
 }
 
@@ -471,6 +486,7 @@ std::chrono::duration<double> run_inference_onednn(
     net_args.push_back({{DNNL_ARG_SRC, conv4_dst_memory},
             {DNNL_ARG_DST, conv4_dst_memory}});
 
+    LIKWID_MARKER_START("onednn");
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t r = 0; r < num_repetitions; ++r) {
         // execute net
@@ -481,6 +497,7 @@ std::chrono::duration<double> run_inference_onednn(
         auto* output_ptr = static_cast<float*>(conv4_dst_memory.get_data_handle());
         results.assign(output_ptr, output_ptr + results.size());
     }
+    LIKWID_MARKER_STOP("onednn");
     return std::chrono::high_resolution_clock::now() - start;
 }
 
@@ -501,12 +518,15 @@ std::chrono::duration<double> run_inference_libtorch(
             reinterpret_cast<void*>(const_cast<float*>(inputs.data())), 
             at::IntArrayRef({input_extents[0], input_extents[1], input_extents[2], input_extents[3], input_extents[4]})
         );
+
+    LIKWID_MARKER_START("libtorch");
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t r = 0; r < num_repetitions; ++r) {
         auto output_tensor = module.forward({input_tensor}).toTensor();
         // assign to output
         std::memcpy(results.data(), output_tensor.data_ptr(), output_tensor.numel() * sizeof(float));
     }
+    LIKWID_MARKER_STOP("libtorch");
     return std::chrono::high_resolution_clock::now() - start;
 }
 #endif  // DALOTIA_E_WITH_LIBTORCH
@@ -564,7 +584,7 @@ int main(int argc, char *argv[]) {
         inference_function;
     std::unordered_map<std::string, inference_function> inference_functions;
 
-    inference_functions["slow_loops"] = run_inference_slow_loops;
+    // inference_functions["slow_loops"] = run_inference_slow_loops;
 
 #ifdef DALOTIA_E_WITH_LIBTORCH
     inference_functions["libtorch"] = run_inference_libtorch;
@@ -583,10 +603,12 @@ int main(int argc, char *argv[]) {
     const size_t num_repetitions = 1000;
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
     dalotia::vector<float> results(num_inputs);
+    LIKWID_MARKER_INIT;
     for (const auto &inference_function_pair : inference_functions) {
         const auto& inference_function = inference_function_pair.second;
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
         std::cout << "Running inference with " << inference_function_pair.first << std::endl;
+        LIKWID_MARKER_REGISTER(inference_function_pair.first.c_str());
         std::memset(results.data(), 0, results.size() * sizeof(int));
 #endif // not DALOTIA_E_FOR_MEMORY_TRACE
 
@@ -605,6 +627,7 @@ int main(int argc, char *argv[]) {
         }
 #endif // not DALOTIA_E_FOR_MEMORY_TRACE
     }
+    LIKWID_MARKER_CLOSE;
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
     std::cout << "All benched!" << std::endl;
 #endif // not DALOTIA_E_FOR_MEMORY_TRACE
