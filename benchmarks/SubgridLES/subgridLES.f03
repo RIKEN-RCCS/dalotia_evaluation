@@ -86,7 +86,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call move_alloc(from=temp_inputs, to=inputs)
     call move_alloc(from=temp_outputs, to=outputs)
 
-#endif ! not DALOTIA_E_FOR_MEMORY_TRACE
+#endif ! DALOTIA_E_FOR_MEMORY_TRACE
     call assert(size(inputs, 1) == num_input_features)
     ! allocate output array the same size as the read one
     allocate(fc1_output(num_output_features, num_inputs))

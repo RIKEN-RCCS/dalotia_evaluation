@@ -589,15 +589,19 @@ int main(int argc, char *argv[]) {
 #ifdef DALOTIA_E_WITH_LIBTORCH
     inference_functions["libtorch"] = run_inference_libtorch;
 #else
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
     std::cout << "libtorch not enabled" << std::endl;
+#endif  // not DALOTIA_E_FOR_MEMORY_TRACE
 #endif  // DALOTIA_E_WITH_LIBTORCH
 
 #ifdef DALOTIA_E_WITH_ONEDNN
     inference_functions["onednn"] = run_inference_onednn;
 #else
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
     std::cout << "onednn not enabled" << std::endl;
+#endif  // not DALOTIA_E_FOR_MEMORY_TRACE
 #endif  // DALOTIA_E_WITH_ONEDNN
-#ifdef DALOTIA_E_FOR_MEMORY_TRACE // plus comment out above the parts I don't want to measure w/ pinatrace
+#ifdef DALOTIA_E_FOR_MEMORY_TRACE 
     const size_t num_repetitions = 1;
 #else
     const size_t num_repetitions = 1000;
