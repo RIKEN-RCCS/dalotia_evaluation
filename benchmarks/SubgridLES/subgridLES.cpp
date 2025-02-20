@@ -6,7 +6,11 @@
 #include "dalotia.hpp"
 #include "dalotia_safetensors_file.hpp"
 
+#ifdef DALOTIA_E_WITH_LIBTORCH
 #include <torch/script.h> // this exec is only built with libtorch
+#else
+#include "cblas.h"
+#endif
 
 #ifdef LIKWID_PERFMON
 #include <likwid-marker.h>
@@ -29,7 +33,7 @@ void assert_close(float a, float b, float tol = 1e-4) {
     assert(std::abs(a - b) < tol);
 #endif  // NDEBUG
 }
-
+#ifdef DALOTIA_E_WITH_LIBTORCH
 std::chrono::duration<double> run_inference_libtorch(
     const dalotia::vector<float> &inputs,
     const std::vector<int> &input_sizes,
@@ -59,6 +63,47 @@ std::chrono::duration<double> run_inference_libtorch(
     LIKWID_MARKER_STOP("libtorch");
     return std::chrono::high_resolution_clock::now() - start;
 }
+
+#else // DALOTIA_E_WITH_LIBTORCH
+
+std::chrono::duration<double> run_inference_cblas(
+    const dalotia::vector<float> &inputs,
+    const std::vector<int> &input_sizes,
+    size_t num_repetitions,
+    const std::vector<int> &output_sizes,
+    dalotia::vector<float> &results) {
+    // load the model
+    std::string filename = "./weights_SubgridLESNet.safetensors";
+    auto dalotia_file = std::unique_ptr<dalotia::TensorFile>(dalotia::make_tensor_file(filename));
+    
+    auto [weights_extents, weights] = dalotia_file->load_tensor_dense<float>("fc1.weight");
+    auto [biases_extents, biases] = dalotia_file->load_tensor_dense<float>("fc1.bias");
+    int num_output_features = output_sizes[1];
+    int num_input_features = input_sizes[1];
+    int num_inputs = input_sizes[0];
+    assert(weights_extents == std::vector<int>({num_input_features, num_output_features}));
+    assert(biases_extents == std::vector<int>({num_output_features})); 
+    assert(output_sizes == std::vector<int>({num_inputs, num_output_features}));
+
+    LIKWID_MARKER_START("cblas");
+    const auto start = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < num_repetitions; ++r) {
+        // fill results vector with bias
+        for (size_t i = 0; i < output_sizes[0]; ++i) {
+            for (size_t j = 0; j < output_sizes[1]; ++j) {
+                results[i * output_sizes[1] + j] = biases[j];
+            }
+        }
+        // todo compare to cblasRowMajor 
+        cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, num_output_features, 
+                    num_inputs, num_input_features, 1.0, weights.data(), 
+                    num_input_features, inputs.data(), num_input_features, 1.0, 
+                    results.data(), num_output_features);
+    }
+    LIKWID_MARKER_STOP("cblas");
+    return std::chrono::high_resolution_clock::now() - start;
+}
+#endif // DALOTIA_E_WITH_LIBTORCH
 
 int main(int argc, char *argv[]) {
     int num_inputs = 16*16*16;
@@ -110,12 +155,21 @@ int main(int argc, char *argv[]) {
     const size_t num_repetitions = 1;
 #else // DALOTIA_E_FOR_MEMORY_TRACE
     const size_t num_repetitions = 1000;
+#ifdef DALOTIA_E_WITH_LIBTORCH
     std::cout << "Running inference with libtorch" << std::endl;
+#else
+    std::cout << "Running inference with cblas" << std::endl;
+#endif
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
     dalotia::vector<float> results(input_extents[0] * 6);
     LIKWID_MARKER_INIT;
-    LIKWID_MARKER_REGISTER("libtorch");    
+#ifdef DALOTIA_E_WITH_LIBTORCH
+    LIKWID_MARKER_REGISTER("libtorch");
     const auto duration = run_inference_libtorch(input_tensor, input_extents, num_repetitions, output_extents, results);
+#else
+    LIKWID_MARKER_REGISTER("cblas");
+    const auto duration = run_inference_cblas(input_tensor, input_extents, num_repetitions, output_extents, results);
+#endif // DALOTIA_E_WITH_LIBTORCH
     LIKWID_MARKER_CLOSE;
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
     std::cout << "Duration: " << duration.count() << "s" << std::endl;
