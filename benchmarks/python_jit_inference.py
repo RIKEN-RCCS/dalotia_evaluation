@@ -90,23 +90,24 @@ if __name__ == "__main__":
     loaded_net, example_forward_input, _, example_output = load_torch_model_file(n)
 
     # resize the input to args.input_size
+    while len(example_forward_input) < args.input_size:
+        example_forward_input = torch.cat((example_forward_input, example_forward_input), dim=0)
+        example_output = torch.cat((example_output, example_output), dim=0)
     if len(example_forward_input) > args.input_size:
         example_forward_input = example_forward_input[:args.input_size]
         example_output = example_output[:args.input_size]
-    else:
-        example_forward_input = torch.cat((example_forward_input, torch.zeros(args.input_size - len(example_forward_input))))
-        example_output = torch.cat((example_output, torch.zeros(args.input_size - len(example_output))))
+    assert example_forward_input.shape[0] == args.input_size
+    assert example_output.shape[0] == args.input_size
 
-    
-    frozen_mod = torch.jit.optimize_for_inference(torch.jit.script(loaded_net))
+    frozen_mod = torch.jit.optimize_for_inference(torch.jit.script(loaded_net, example_forward_input))
 
-    num_iterations = 1000
+    num_repetitions = 1000
     start = time.perf_counter()
-    for i in range(num_iterations):
+    for i in range(num_repetitions):
         result = frozen_mod(example_forward_input)
     end = time.perf_counter()
-    print(f"Time taken for {num_iterations} iterations: {end - start} seconds")
-    print(f"On average: {(end - start) / num_iterations}s")
+    print(f"Time taken for {num_repetitions} iterations: {end - start} seconds")
+    print(f"On average: {(end - start) / num_repetitions}s")
     
     assert torch.allclose(result, example_output, atol=1e-6)
 
