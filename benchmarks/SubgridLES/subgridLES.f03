@@ -1,5 +1,8 @@
 program subgridles_inference
 use dalotia_c_interface
+#ifdef LIKWID_PERFMON
+use likwid
+#endif ! LIKWID_PERFMON
 use,intrinsic::ISO_C_BINDING, only : C_float, C_double
 use,intrinsic :: iso_fortran_env, only : int64,real64
   implicit none
@@ -92,6 +95,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     allocate(fc1_output(num_output_features, num_inputs))
 
     call system_clock(start_time)
+#ifdef LIKWID_PERFMON
+    call likwid_markerInit()
+    call likwid_markerRegisterRegion("SubgridLESNet")
+    call likwid_markerStartRegion("SubgridLESNet")
+#endif ! LIKWID_PERFMON
     do i = 1, num_repetitions
        ! apply fully connected layer
         do o = 1, num_inputs !concurrent (o = 1:num_inputs)
@@ -109,7 +117,10 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
         ! reLU:
         fc1_output = max(0.0, fc1_output)
     end do
-
+#ifdef LIKWID_PERFMON
+    call likwid_markerStopRegion("SubgridLESNet")
+    call likwid_markerClose()
+#endif ! LIKWID_PERFMON
     call system_clock(end_time)
     call system_clock(count_rate=count_rate)
 
