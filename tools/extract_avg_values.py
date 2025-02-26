@@ -12,7 +12,7 @@ if __name__ == "__main__":
         type=str,
         help="either: runtime, memory, or energy",
         nargs="?",
-        const="runtime", # default
+        const="runtime",  # default
     )
     args = parser.parse_args()
 
@@ -31,14 +31,18 @@ if __name__ == "__main__":
         # with the input length listed between them in the file
         # cf. https://docs.python.org/3/library/re.html#simulating-scanf
         results = re.findall(r"On average:\s*(\S+)\s*s", contents)
+        assert len(results) > 0
         results = [float(result) for result in results]
     elif args.type == "memory":
         # the results are listed on a single line,
         # and input lengths are listed on some line above
         results = re.findall(r"\n(\d+)\n", contents)
+        assert len(results) > 0
         results = [int(result) for result in results]
     elif args.type == "energy":
-        results = re.findall(r"|\s*Energy [J]\s*|\s*(\d+\.\d+)\s*|", contents)
+        results = re.findall(r"\|\s*Energy \[J\]\s*\|\s*(\d+\.?\d*)\s*\|", contents)
+        assert len(results) > 0
+        print(len(results), results)
         num_repetitions = 1000
         results = [float(result) / num_repetitions for result in results]
     print(results)
