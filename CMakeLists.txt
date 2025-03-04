@@ -47,7 +47,7 @@ if (DALOTIA_E_USE_OLD_ABI)
 endif (DALOTIA_E_USE_OLD_ABI)
 
 set(BLA_STATIC ON)
-set(BLA_VENDOR "OpenBLAS") # or: Fujitsu_SSL2...
+set(BLA_VENDOR "OpenBLAS") # or: Fujitsu_SSL2, Intel10_64lp_seq, OpenBLAS...
 find_package(BLAS) # careful: torch may be shipped with its own blas
 if (NOT BLAS_FOUND)
   # try to find any BLAS
@@ -97,6 +97,8 @@ if (DALOTIA_E_WITH_ONEDNN)
     OVERRIDE_FIND_PACKAGE
   )
   FetchContent_MakeAvailable(dnnl)
+  # to pass DNNL_DIR on the command line:
+  # find_package(dnnl REQUIRED CMAKE_FIND_ROOT_PATH_BOTH)
   find_package(dnnl 3.6.2 CONFIG REQUIRED)
 endif (DALOTIA_E_WITH_ONEDNN)
 
@@ -162,7 +164,6 @@ if (DALOTIA_E_WITH_LIBTORCH)
   # cmake_path(GET ${Torch_DIR} PARENT_PATH p) #?? undefined?!?‽
   # LIST(APPEND TORCH_LIBRARIES "${p}/../../../../torch.libs")
   # message(STATUS "Torch libraries are: ${TORCH_LIBRARIES}")
-  
   # well then I'll just add it manually for now
   # link_directories("../venv/lib64/python3.12/site-packages/torch.libs/")
 endif(DALOTIA_E_WITH_LIBTORCH)

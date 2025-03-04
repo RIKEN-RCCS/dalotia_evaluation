@@ -65,7 +65,7 @@ if __name__ == "__main__":
         subprocess.call(["latexmk", "-pdf", "scalingplot.tex"])
     except FileNotFoundError as e:
         print(
-            "Could not generate plot with latexmk, \
-            check if it is installed and scalingplot.tex exists"
+            "Could not generate plot with latexmk, "
+            + "check if it is installed and scalingplot.tex exists"
         )
         pass
