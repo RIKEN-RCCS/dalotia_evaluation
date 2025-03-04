@@ -47,15 +47,15 @@ if (DALOTIA_E_USE_OLD_ABI)
 endif (DALOTIA_E_USE_OLD_ABI)
 
 set(BLA_STATIC ON)
-set(BLA_VENDOR "OpenBLAS") # or: Fujitsu_SSL2, Intel10_64lp_seq, OpenBLAS...
-find_package(BLAS) # careful: torch may be shipped with its own blas
-if (NOT BLAS_FOUND)
-  # try to find any BLAS
-  unset(BLA_VENDOR)
-  find_package(BLAS REQUIRED)
-endif (NOT BLAS_FOUND)
+if (NOT DEFINED BLA_VENDOR OR BLA_VENDOR MATCHES "default")
+  set(BLA_VENDOR "OpenBLAS") # or: Fujitsu_SSL2, Intel10_64lp_seq, OpenBLAS...
+endif()
+find_package(BLAS) 
+# careful: torch may be shipped with its own blas
+# careful: loading the mkl module always changes the BLAS in dnnl, regardless of BLA_VENDOR
 
 if (NOT BLAS_INCLUDE_DIRS OR BLAS_INCLUDE_DIRS STREQUAL "")
+  # fix for finding the include dirs in OpenBLAS default install
   # list with blas libraries but get their parent directory
   SET(BLAS_LIBRARIES_PARENTS "")
    FOREACH(l BLAS_LIBRARIES)
@@ -90,16 +90,19 @@ if (DALOTIA_E_WITH_NDIRECT)
 endif (DALOTIA_E_WITH_NDIRECT)
 
 if (DALOTIA_E_WITH_ONEDNN)
-  FetchContent_Declare(
-    dnnl
-    GIT_REPOSITORY https://github.com/oneapi-src/oneDNN.git
-    GIT_TAG v3.6.2
-    OVERRIDE_FIND_PACKAGE
-  )
-  FetchContent_MakeAvailable(dnnl)
-  # to pass DNNL_DIR on the command line:
-  # find_package(dnnl REQUIRED CMAKE_FIND_ROOT_PATH_BOTH)
-  find_package(dnnl 3.6.2 CONFIG REQUIRED)
+  if (NOT DEFINED dnnl_DIR OR dnnl_DIR MATCHES "fetch")
+    FetchContent_Declare(
+      dnnl
+      GIT_REPOSITORY https://github.com/oneapi-src/oneDNN.git
+      GIT_TAG v3.6.2
+      OVERRIDE_FIND_PACKAGE
+    )
+    FetchContent_MakeAvailable(dnnl)
+    find_package(dnnl 3.6.2 CONFIG REQUIRED)
+  else()
+    # to pass DNNL_DIR on the command line:
+    find_package(dnnl REQUIRED CMAKE_FIND_ROOT_PATH_BOTH)
+  endif()
 endif (DALOTIA_E_WITH_ONEDNN)
 
 if (DALOTIA_E_WITH_LIBTORCH)
