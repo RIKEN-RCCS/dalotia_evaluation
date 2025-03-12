@@ -35,19 +35,14 @@ void assert_close(float a, float b, float tol = 1e-4) {
 }
 #ifdef DALOTIA_E_WITH_LIBTORCH
 std::chrono::duration<double> run_inference_libtorch(
-    const dalotia::vector<float> &inputs,
+    const std::vector<dalotia::vector<float>> &input_tensors,
     const std::vector<int> &input_sizes,
     size_t num_repetitions,
     const std::vector<int> &output_sizes,
-    dalotia::vector<float> &results) {
+    std::vector<dalotia::vector<float>> &result_tensors) {
     torch::jit::script::Module module = torch::jit::load("traced_SubgridLESNet.pt");
     module = torch::jit::optimize_for_inference(module);
 
-    // todo keep const semantics on input -> seems that's not a thing in libtorch
-    const auto input_tensor = torch::from_blob(
-            reinterpret_cast<void*>(const_cast<float*>(inputs.data())), 
-            at::IntArrayRef({input_sizes[0], input_sizes[1]})
-        );
     LIKWID_MARKER_START("libtorch");
     const auto start = std::chrono::high_resolution_clock::now();
     // If I can't figure out how to pass the output address to forward(), then most other people also won't 
@@ -56,6 +51,14 @@ std::chrono::duration<double> run_inference_libtorch(
     //         at::IntArrayRef({output_sizes[0], output_sizes[1]})
     //     );
     for (size_t r = 0; r < num_repetitions; ++r) {
+        auto& inputs = input_tensors[r];
+        auto& results = result_tensors[r];
+            
+        // todo keep const semantics on input -> seems that's not a thing in libtorch
+        const auto input_tensor = torch::from_blob(
+                reinterpret_cast<void*>(const_cast<float*>(inputs.data())), 
+                at::IntArrayRef({input_sizes[0], input_sizes[1]})
+            );
         auto output_tensor = module.forward({input_tensor}).toTensor();
         // assign to output
         std::memcpy(results.data(), output_tensor.data_ptr(), output_tensor.numel() * sizeof(float));
@@ -67,11 +70,11 @@ std::chrono::duration<double> run_inference_libtorch(
 #else // DALOTIA_E_WITH_LIBTORCH
 
 std::chrono::duration<double> run_inference_cblas(
-    const dalotia::vector<float> &inputs,
+    const std::vector<dalotia::vector<float>> &input_tensors,
     const std::vector<int> &input_sizes,
     size_t num_repetitions,
     const std::vector<int> &output_sizes,
-    dalotia::vector<float> &results) {
+    std::vector<dalotia::vector<float>> &result_tensors) {
     // load the model
     std::string filename = "./weights_SubgridLESNet.safetensors";
     auto dalotia_file = std::unique_ptr<dalotia::TensorFile>(dalotia::make_tensor_file(filename));
@@ -88,6 +91,9 @@ std::chrono::duration<double> run_inference_cblas(
     LIKWID_MARKER_START("cblas");
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t r = 0; r < num_repetitions; ++r) {
+        auto& inputs = input_tensors[r];
+        auto& results = result_tensors[r];
+
         // fill results vector with bias
         for (size_t i = 0; i < output_sizes[0]; ++i) {
             for (size_t j = 0; j < output_sizes[1]; ++j) {
@@ -161,14 +167,20 @@ int main(int argc, char *argv[]) {
     std::cout << "Running inference with cblas" << std::endl;
 #endif
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
+    std::vector<dalotia::vector<float>> input_tensors(num_repetitions, input_tensor);
+    if (num_repetitions > 0) {
+        assert(input_tensors[0].data() != input_tensors.back().data());
+    }
     dalotia::vector<float> results(input_extents[0] * 6);
+    std::vector<dalotia::vector<float>> result_tensors(num_repetitions, results);
+
     LIKWID_MARKER_INIT;
 #ifdef DALOTIA_E_WITH_LIBTORCH
     LIKWID_MARKER_REGISTER("libtorch");
-    const auto duration = run_inference_libtorch(input_tensor, input_extents, num_repetitions, output_extents, results);
+    const auto duration = run_inference_libtorch(input_tensors, input_extents, num_repetitions, output_extents, result_tensors);
 #else
     LIKWID_MARKER_REGISTER("cblas");
-    const auto duration = run_inference_cblas(input_tensor, input_extents, num_repetitions, output_extents, results);
+    const auto duration = run_inference_cblas(input_tensors, input_extents, num_repetitions, output_extents, result_tensors);
 #endif // DALOTIA_E_WITH_LIBTORCH
     LIKWID_MARKER_CLOSE;
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
@@ -176,11 +188,13 @@ int main(int argc, char *argv[]) {
     std::cout << "On average: " << duration.count() / static_cast<float>(num_repetitions) << "s" << std::endl;
 
     // check correctness of the output
-    for (size_t i = 0; i < results.size(); ++i) {
-        if (results[i] != expected_output_tensor[i]) {
-            std::cerr << "results[" << i << "] = " << results[i] << 
-                            " != expected_output_tensor[" << i << "] = " << expected_output_tensor[i] << std::endl;
-            throw std::runtime_error("results != expected_output_tensor");
+    for (const auto& results : result_tensors) {
+        for (size_t i = 0; i < results.size(); ++i) {
+            if (results[i] != expected_output_tensor[i]) {
+                std::cerr << "results[" << i << "] = " << results[i] << 
+                                " != expected_output_tensor[" << i << "] = " << expected_output_tensor[i] << std::endl;
+                throw std::runtime_error("results != expected_output_tensor");
+            }
         }
     }
 #endif // not DALOTIA_E_FOR_MEMORY_TRACE

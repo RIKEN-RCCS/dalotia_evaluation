@@ -22,6 +22,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 
     ! allocatable input arrays
     real(C_float), dimension(:, :), allocatable :: inputs, temp_inputs, fc1_output, outputs, temp_outputs
+    real(C_float), dimension(:, :, :), allocatable :: all_inputs, all_outputs
 
     num_inputs = 16*16*16
     num_args = command_argument_count()
@@ -58,6 +59,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     ! just allocate
     allocate(inputs(num_input_features, num_inputs))
     allocate(outputs(num_output_features, num_inputs))
+    allocate(all_inputs(num_input_features, num_inputs, 1))
 #else
     write (*, *) "Loading inputs from ", trim(filename_input)
     dalotia_file_pointer = dalotia_open_file(trim(filename_input))
@@ -89,10 +91,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call move_alloc(from=temp_inputs, to=inputs)
     call move_alloc(from=temp_outputs, to=outputs)
 
+    all_inputs = spread(inputs, 3, num_repetitions)
 #endif ! DALOTIA_E_FOR_MEMORY_TRACE
     call assert(size(inputs, 1) == num_input_features)
     ! allocate output array the same size as the read one
-    allocate(fc1_output(num_output_features, num_inputs))
+    allocate(all_outputs(num_output_features, num_inputs, num_repetitions))
 
     call system_clock(start_time)
 #ifdef LIKWID_PERFMON
@@ -104,18 +107,18 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
        ! apply fully connected layer
         do o = 1, num_inputs !concurrent (o = 1:num_inputs)
           ! fill with bias
-          fc1_output(:, o) = bias_fc1(:)
+          all_outputs(:,o,i) = bias_fc1(:)
         end do
         ! this here is more concise but slower: 
-        ! fc1_output = spread(bias_fc1, 2, num_inputs)
-        ! fc1_output = matmul(transpose(weight_fc1), inputs) + fc1_output
+        ! all_outputs(:,:,i) = spread(bias_fc1, 2, num_inputs)
+        ! all_outputs(:,:,i) = matmul(transpose(weight_fc1), all_inputs(:, :, i)) + all_outputs(:,:,i)
 
         call sgemm('T', 'N', num_output_features, num_inputs, num_input_features, 1.0, &
-                  weight_fc1, num_input_features, inputs, num_input_features,  1.0, &
-                  fc1_output, num_output_features)
+                  weight_fc1, num_input_features, all_inputs(:, :, i), num_input_features,  1.0, &
+                  all_outputs(:,:,i), num_output_features)
 
         ! reLU:
-        fc1_output = max(0.0, fc1_output)
+        all_outputs(:,:,i) = max(0.0, all_outputs(:,:,i))
     end do
 #ifdef LIKWID_PERFMON
     call likwid_markerStopRegion("SubgridLESNet")
@@ -130,9 +133,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     write(*,*) "On average: ", duration/real(num_repetitions, kind=real64), "s"
 
   ! compare output
-    do o = 1, num_inputs
-      do f = 1, num_output_features
-        call assert_close_f(fc1_output(f, o), outputs(f, o))
+    do i = 1, num_repetitions
+      do o = 1, num_inputs
+        do f = 1, num_output_features
+          call assert_close_f(all_outputs(f, o, i), outputs(f, o))
+        end do
       end do
     end do
 #endif ! not DALOTIA_E_FOR_MEMORY_TRACE
