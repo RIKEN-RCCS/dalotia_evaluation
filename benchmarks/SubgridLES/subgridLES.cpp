@@ -5,6 +5,7 @@
 
 #include "dalotia.hpp"
 #include "dalotia_safetensors_file.hpp"
+#include "cacheflush.h"
 
 #ifdef DALOTIA_E_WITH_LIBTORCH
 #include <torch/script.h> // this exec is only built with libtorch
@@ -155,6 +156,10 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+    // initialize cache flushing
+    if (cf_init() != 0){
+        throw std::runtime_error("Cache flushing not enabled");
+    }
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
 
 #ifdef DALOTIA_E_FOR_MEMORY_TRACE
@@ -175,6 +180,10 @@ int main(int argc, char *argv[]) {
     std::vector<dalotia::vector<float>> result_tensors(num_repetitions, results);
 
     LIKWID_MARKER_INIT;
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
+    // flush caches to avoid the input and output being cached after initialization
+    if (cf_flush(_CF_L3_) != 0) throw std::runtime_error("Cache flush failed!");
+#endif // DALOTIA_E_FOR_MEMORY_TRACE
 #ifdef DALOTIA_E_WITH_LIBTORCH
     LIKWID_MARKER_REGISTER("libtorch");
     const auto duration = run_inference_libtorch(input_tensors, input_extents, num_repetitions, output_extents, result_tensors);
@@ -197,6 +206,10 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+    if (cf_finalize() != 0) {
+        throw std::runtime_error("Could not finalize cache flush");
+    }
+    std::cout << "success!" << std::endl;
 #endif // not DALOTIA_E_FOR_MEMORY_TRACE
 
     return 0;

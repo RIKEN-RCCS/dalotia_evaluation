@@ -1,5 +1,7 @@
 add_executable( deeprleddy_cpp deeprleddy.cpp )
 target_link_libraries( deeprleddy_cpp PUBLIC dalotia_cpp )
+target_link_libraries( deeprleddy_cpp PRIVATE cacheflush )
+
 # use openblas header
 target_include_directories( deeprleddy_cpp PUBLIC ${BLAS_INCLUDE_DIRS})
 target_link_libraries(deeprleddy_cpp PRIVATE BLAS::BLAS)

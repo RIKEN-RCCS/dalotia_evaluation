@@ -1,5 +1,29 @@
+module cacheflush_interface
+  implicit none
+
+  enum, bind(C) ! lvl_enum_t
+      enumerator :: CF_L1_ = 1, &
+                    CF_L2_ = 2, &
+                    CF_L3_ = 3
+  end enum
+
+  interface
+    integer(kind=C_int) function cf_init() bind(C,name="cf_init")
+      use, intrinsic :: ISO_C_binding, only: C_int
+    end function cf_init
+    integer(kind=C_int) function cf_flush(lvl_enum) bind(C,name="cf_flush")
+      use, intrinsic :: ISO_C_binding, only: C_int
+      integer(kind=kind(CF_L1_)), value, intent(in) :: lvl_enum
+    end function cf_flush
+    integer(kind=C_int) function cf_finalize() bind(C,name="cf_finalize")
+      use, intrinsic :: ISO_C_binding, only: C_int
+    end function cf_finalize
+  end interface
+end module
+
 program subgridles_inference
 use dalotia_c_interface
+use cacheflush_interface
 #ifdef LIKWID_PERFMON
 use likwid
 #endif ! LIKWID_PERFMON
@@ -19,6 +43,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions
     integer :: num_input_features = size(weight_fc1, 1)
     integer :: num_output_features = size(weight_fc1, 2)
+    integer(kind=C_int) :: cacheflush_return_value
 
     ! allocatable input arrays
     real(C_float), dimension(:, :), allocatable :: inputs, temp_inputs, fc1_output, outputs, temp_outputs
@@ -92,6 +117,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call move_alloc(from=temp_outputs, to=outputs)
 
     all_inputs = spread(inputs, 3, num_repetitions)
+    cacheflush_return_value = cf_init()
+    cacheflush_return_value = cf_flush(3)
+    if (cacheflush_return_value .ne. 0) then
+      error stop "cacheflush failed"
+    endif
 #endif ! DALOTIA_E_FOR_MEMORY_TRACE
     call assert(size(inputs, 1) == num_input_features)
     ! allocate output array the same size as the read one
@@ -140,6 +170,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
         end do
       end do
     end do
+    cacheflush_return_value = cf_finalize()
 #endif ! not DALOTIA_E_FOR_MEMORY_TRACE
 contains
 

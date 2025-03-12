@@ -7,6 +7,7 @@
 
 #include "dalotia.hpp"
 #include "dalotia_safetensors_file.hpp"
+#include "cacheflush.h"
 
 #ifdef DALOTIA_E_WITH_NDIRECT
 #include <NDIRECT_direct.h>
@@ -583,6 +584,10 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+    // initialize cache flushing
+    if (cf_init() != 0){
+        throw std::runtime_error("Cache flushing not enabled");
+    }
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
 
     typedef std::function<std::chrono::duration<double>(
@@ -631,6 +636,9 @@ int main(int argc, char *argv[]) {
         for (auto& results : result_tensors) {
             std::memset(results.data(), 0, results.size() * sizeof(float));
         }
+
+        // flush caches to avoid the input and output being cached after initialization
+        if (cf_flush(_CF_L3_) != 0) throw std::runtime_error("Cache flush failed!");
 #endif // not DALOTIA_E_FOR_MEMORY_TRACE
 
         const auto duration = inference_function(
@@ -652,6 +660,9 @@ int main(int argc, char *argv[]) {
     }
     LIKWID_MARKER_CLOSE;
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
+    if (cf_finalize() != 0) {
+        throw std::runtime_error("Could not finalize cache flush");
+    }
     std::cout << "All benched!" << std::endl;
 #endif // not DALOTIA_E_FOR_MEMORY_TRACE
 
