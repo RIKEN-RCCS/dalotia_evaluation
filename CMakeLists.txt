@@ -97,6 +97,7 @@ if (DALOTIA_E_WITH_ONEDNN)
       GIT_TAG v3.6.2
       OVERRIDE_FIND_PACKAGE
     )
+    set(DNNL_LIBRARY_TYPE STATIC)
     FetchContent_MakeAvailable(dnnl)
     find_package(dnnl 3.6.2 CONFIG REQUIRED)
   else()
@@ -189,7 +190,5 @@ endif (DALOTIA_E_WITH_BOOST_MULTI)
 
 find_package(OpenMP) #TODO this should not be always on?
 
-
+add_subdirectory(cacheflush)
 add_subdirectory(benchmarks)
-
-
