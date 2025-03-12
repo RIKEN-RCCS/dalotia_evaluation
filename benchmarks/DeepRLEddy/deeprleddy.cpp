@@ -151,10 +151,10 @@ void conv3d_with_relu_naive(
 }
 
 std::chrono::duration<double> run_inference_slow_loops(
-    const dalotia::vector<float> &input_tensor,
+    const std::vector<dalotia::vector<float>> &input_tensors,
     const std::vector<int> &input_extents,
     size_t num_repetitions,
-    dalotia::vector<float> &results){
+    std::vector<dalotia::vector<float>> &result_tensors){
 
     std::string filename = "./weights_DeepRLEddyNet.safetensors";
 
@@ -170,7 +170,7 @@ std::chrono::duration<double> run_inference_slow_loops(
     const auto conv4_weight_indexer =
         get_tensor_indexer<5>(conv4_weight_extents);
 
-    const int num_inputs = input_tensor.size() / (6*6*6) / 3;
+    const int num_inputs = input_tensors[0].size() / (6*6*6) / 3;
     std::array<int, 5> input_extents_array;
     std::copy(input_extents.begin(), input_extents.end(), input_extents_array.begin());
     const auto input_indexer =
@@ -194,6 +194,8 @@ std::chrono::duration<double> run_inference_slow_loops(
     LIKWID_MARKER_START("slow_loops");
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t r = 0; r < num_repetitions; ++r) {
+        auto& input_tensor = input_tensors[r];
+        auto& results = result_tensors[r];
         // copy data to larger array for zero-padding at the edges
         for (int o = 0; o < num_inputs; ++o) {
             for (int c = 0; c < 3; ++c) {
@@ -237,10 +239,10 @@ std::chrono::duration<double> run_inference_slow_loops(
 
 #ifdef DALOTIA_E_WITH_ONEDNN
 std::chrono::duration<double> run_inference_onednn(
-    const dalotia::vector<float> &input_tensor,
+    const std::vector<dalotia::vector<float>> &input_tensors,
     const std::vector<int> &input_extents,
     size_t num_repetitions,
-    dalotia::vector<float> &results) {
+    std::vector<dalotia::vector<float>> &result_tensors) {
 
     std::string filename = "./weights_DeepRLEddyNet.safetensors";
     dalotia::vector<float> conv1_weight;
@@ -320,6 +322,8 @@ std::chrono::duration<double> run_inference_onednn(
     dnnl::memory::dims conv_yes_to_padding = {1, 1, 1};
     dnnl::memory::dims conv_no_to_padding = {0, 0, 0};
 
+    auto original_input_md = dnnl::memory::desc({input_tz}, dnnl::memory::data_type::f32, 
+        dnnl::memory::format_tag::ncdhw);
     auto conv1_original_weights_md = dnnl::memory::desc({conv1_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::oidhw);
     auto conv2_original_weights_md = dnnl::memory::desc({conv2_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::oidhw);
     auto conv3_original_weights_md = dnnl::memory::desc({conv3_weights_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::oidhw);
@@ -329,8 +333,7 @@ std::chrono::duration<double> run_inference_onednn(
     auto conv3_original_bias_md = dnnl::memory::desc({conv3_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
     auto conv4_original_bias_md = dnnl::memory::desc({conv4_bias_tz}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
 
-    auto original_input_memory = dnnl::memory({{input_tz}, dnnl::memory::data_type::f32, 
-        dnnl::memory::format_tag::ncdhw}, eng, reinterpret_cast<void*>(const_cast<float*>(input_tensor.data())));
+    auto original_input_memory = dnnl::memory(original_input_md, eng, reinterpret_cast<void*>(const_cast<float*>(input_tensors[0].data())));
     auto conv1_original_weights_memory = dnnl::memory(conv1_original_weights_md, eng, conv1_weight_ptr);
     auto conv2_original_weights_memory = dnnl::memory(conv2_original_weights_md, eng, conv2_weight_ptr);
     auto conv3_original_weights_memory = dnnl::memory(conv3_original_weights_md, eng, conv3_weight_ptr);
@@ -489,13 +492,17 @@ std::chrono::duration<double> run_inference_onednn(
     LIKWID_MARKER_START("onednn");
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t r = 0; r < num_repetitions; ++r) {
+        auto& input_tensor = input_tensors[r];
+        auto& results = result_tensors[r];
+        auto iterated_input_memory = dnnl::memory(original_input_md, eng, reinterpret_cast<void*>(const_cast<float*>(input_tensor.data())));
+        net_args[0][1] = iterated_input_memory;
         // execute net
         for (size_t i = 0; i < net.size(); ++i) {
             net.at(i).execute(s, net_args.at(i));
         }
         // copy back //TODO set output memory same as results
         auto* output_ptr = static_cast<float*>(conv4_dst_memory.get_data_handle());
-        results.assign(output_ptr, output_ptr + results.size());
+        std::memcpy(results.data(), output_ptr, results.size() * sizeof(float));
     }
     LIKWID_MARKER_STOP("onednn");
     return std::chrono::high_resolution_clock::now() - start;
@@ -505,10 +512,10 @@ std::chrono::duration<double> run_inference_onednn(
 
 #ifdef DALOTIA_E_WITH_LIBTORCH
 std::chrono::duration<double> run_inference_libtorch(
-    const dalotia::vector<float> &inputs,
+    const std::vector<dalotia::vector<float>> &input_tensors,
     const std::vector<int> &input_extents,
     size_t num_repetitions,
-    dalotia::vector<float> &results) {
+    std::vector<dalotia::vector<float>> &result_tensors) {
 
     torch::jit::script::Module module = torch::jit::load("traced_DeepRLEddyNet.pt");
     module = torch::jit::optimize_for_inference(module);
@@ -522,6 +529,8 @@ std::chrono::duration<double> run_inference_libtorch(
     LIKWID_MARKER_START("libtorch");
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t r = 0; r < num_repetitions; ++r) {
+        auto& input_tensor = input_tensors[r];
+        auto& results = result_tensors[r];
         auto output_tensor = module.forward({input_tensor}).toTensor();
         // assign to output
         std::memcpy(results.data(), output_tensor.data_ptr(), output_tensor.numel() * sizeof(float));
@@ -577,10 +586,10 @@ int main(int argc, char *argv[]) {
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
 
     typedef std::function<std::chrono::duration<double>(
-        const dalotia::vector<float> &input_tensor,
+        const std::vector<dalotia::vector<float>> &input_tensors,
         const std::vector<int> &input_extents,
         size_t num_repetitions,
-        dalotia::vector<float> &results)>
+        std::vector<dalotia::vector<float>> &result_tensors)>
         inference_function;
     std::unordered_map<std::string, inference_function> inference_functions;
 
@@ -606,27 +615,37 @@ int main(int argc, char *argv[]) {
 #else
     const size_t num_repetitions = 1000;
 #endif // DALOTIA_E_FOR_MEMORY_TRACE
+    std::vector<dalotia::vector<float>> input_tensors(num_repetitions, input_tensor);
+    if (num_repetitions > 0) {
+        assert(input_tensors[0].data() != input_tensors.back().data());
+    }
     dalotia::vector<float> results(num_inputs);
+    std::vector<dalotia::vector<float>> result_tensors(num_repetitions, results);
+
     LIKWID_MARKER_INIT;
     for (const auto &inference_function_pair : inference_functions) {
         const auto& inference_function = inference_function_pair.second;
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
         std::cout << "Running inference with " << inference_function_pair.first << std::endl;
         LIKWID_MARKER_REGISTER(inference_function_pair.first.c_str());
-        std::memset(results.data(), 0, results.size() * sizeof(int));
+        for (auto& results : result_tensors) {
+            std::memset(results.data(), 0, results.size() * sizeof(float));
+        }
 #endif // not DALOTIA_E_FOR_MEMORY_TRACE
 
         const auto duration = inference_function(
-            input_tensor, input_extents, num_repetitions, results);
+            input_tensors, input_extents, num_repetitions, result_tensors);
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
         std::cout << "Duration: " << duration.count() << "s" << std::endl;
         std::cout << "On average: " << duration.count() / static_cast<float>(num_repetitions) << "s" << std::endl;
         // check correctness of the output
-        for (size_t i = 0; i < results.size(); ++i) {
-            if (! is_close(results[i], expected_output_tensor[i])) {
-                std::cerr << "results[" << i << "] = " << results[i] << 
-                             " != expected_output_tensor[" << i << "] = " << expected_output_tensor[i] << std::endl;
-                throw std::runtime_error("results != expected_output_tensor");
+        for (const auto& results : result_tensors) {
+            for (size_t i = 0; i < results.size(); ++i) {
+                if (! is_close(results[i], expected_output_tensor[i])) {
+                    std::cerr << "results[" << i << "] = " << results[i] << 
+                                " != expected_output_tensor[" << i << "] = " << expected_output_tensor[i] << std::endl;
+                    throw std::runtime_error("results != expected_output_tensor");
+                }
             }
         }
 #endif // not DALOTIA_E_FOR_MEMORY_TRACE
