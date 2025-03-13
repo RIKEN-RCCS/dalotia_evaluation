@@ -521,17 +521,17 @@ std::chrono::duration<double> run_inference_libtorch(
     torch::jit::script::Module module = torch::jit::load("traced_DeepRLEddyNet.pt");
     module = torch::jit::optimize_for_inference(module);
 
-    // todo keep const semantics on input -> seems that's not a thing in libtorch
-    const auto input_tensor = torch::from_blob(
-            reinterpret_cast<void*>(const_cast<float*>(inputs.data())), 
-            at::IntArrayRef({input_extents[0], input_extents[1], input_extents[2], input_extents[3], input_extents[4]})
-        );
-
     LIKWID_MARKER_START("libtorch");
     const auto start = std::chrono::high_resolution_clock::now();
     for (size_t r = 0; r < num_repetitions; ++r) {
-        auto& input_tensor = input_tensors[r];
+        auto& inputs = input_tensors[r];
         auto& results = result_tensors[r];
+	// todo keep const semantics on input -> seems that's not a thing in libtorch
+        const auto input_tensor = torch::from_blob(
+                reinterpret_cast<void*>(const_cast<float*>(inputs.data())),
+                at::IntArrayRef({input_extents[0], input_extents[1], input_extents[2], input_extents[3], input_extents[4]})
+            );
+
         auto output_tensor = module.forward({input_tensor}).toTensor();
         // assign to output
         std::memcpy(results.data(), output_tensor.data_ptr(), output_tensor.numel() * sizeof(float));

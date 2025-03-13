@@ -125,6 +125,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 #endif ! DALOTIA_E_FOR_MEMORY_TRACE
     call assert(size(inputs, 1) == num_input_features)
     ! allocate output array the same size as the read one
+    allocate(fc1_output(num_output_features, num_inputs))
     allocate(all_outputs(num_output_features, num_inputs, num_repetitions))
 
     call system_clock(start_time)
@@ -137,18 +138,18 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
        ! apply fully connected layer
         do o = 1, num_inputs !concurrent (o = 1:num_inputs)
           ! fill with bias
-          all_outputs(:,o,i) = bias_fc1(:)
+          fc1_output(:,o) = bias_fc1(:)
         end do
         ! this here is more concise but slower: 
-        ! all_outputs(:,:,i) = spread(bias_fc1, 2, num_inputs)
-        ! all_outputs(:,:,i) = matmul(transpose(weight_fc1), all_inputs(:, :, i)) + all_outputs(:,:,i)
+        ! fc1_output = spread(bias_fc1, 2, num_inputs)
+        ! fc1_output = matmul(transpose(weight_fc1), all_inputs(:, :, i)) + fc1_output
 
         call sgemm('T', 'N', num_output_features, num_inputs, num_input_features, 1.0, &
                   weight_fc1, num_input_features, all_inputs(:, :, i), num_input_features,  1.0, &
-                  all_outputs(:,:,i), num_output_features)
+                  fc1_output, num_output_features)
 
         ! reLU:
-        all_outputs(:,:,i) = max(0.0, all_outputs(:,:,i))
+        all_outputs(:,:,i) = max(0.0, fc1_output)
     end do
 #ifdef LIKWID_PERFMON
     call likwid_markerStopRegion("SubgridLESNet")
