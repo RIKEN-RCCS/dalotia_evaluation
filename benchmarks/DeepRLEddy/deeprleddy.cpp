@@ -364,11 +364,13 @@ std::chrono::duration<double> run_inference_onednn(
             conv1_adapted_bias_md, conv1_adapted_output_md, conv_strides, conv_yes_to_padding,
             conv_yes_to_padding);
     auto conv1_src_memory = original_input_memory;
-    if (conv1_prim_desc.src_desc() != original_input_memory.get_desc()) {
+    bool input_reordered = false;
+    if (conv1_prim_desc.src_desc() != original_input_md) {
         conv1_src_memory = dnnl::memory(conv1_prim_desc.src_desc(), eng);
         net.push_back(dnnl::reorder(original_input_memory, conv1_src_memory));
         net_args.push_back({{DNNL_ARG_FROM, original_input_memory},
                 {DNNL_ARG_TO, conv1_src_memory}});
+        input_reordered = true;
     }
     auto conv1_weights_memory = conv1_original_weights_memory;
     if (conv1_prim_desc.weights_desc() != conv1_original_weights_md) {
@@ -496,11 +498,17 @@ std::chrono::duration<double> run_inference_onednn(
         auto& input_tensor = input_tensors[r];
         auto& results = result_tensors[r];
         auto iterated_input_memory = dnnl::memory(original_input_md, eng, reinterpret_cast<void*>(const_cast<float*>(input_tensor.data())));
-        net_args[0][1] = iterated_input_memory;
+        if (input_reordered) {
+            net[0] = dnnl::reorder(iterated_input_memory, conv1_src_memory);
+            net_args[0][DNNL_ARG_FROM] = iterated_input_memory;
+        } else {
+            net_args[0][DNNL_ARG_SRC] = iterated_input_memory;
+        }
         // execute net
         for (size_t i = 0; i < net.size(); ++i) {
             net.at(i).execute(s, net_args.at(i));
         }
+        s.wait();
         // copy back //TODO set output memory same as results
         auto* output_ptr = static_cast<float*>(conv4_dst_memory.get_data_handle());
         std::memcpy(results.data(), output_ptr, results.size() * sizeof(float));
