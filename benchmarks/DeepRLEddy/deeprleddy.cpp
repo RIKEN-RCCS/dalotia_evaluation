@@ -497,7 +497,12 @@ std::chrono::duration<double> run_inference_onednn(
     for (size_t r = 0; r < num_repetitions; ++r) {
         auto& input_tensor = input_tensors[r];
         auto& results = result_tensors[r];
-        auto iterated_input_memory = dnnl::memory(original_input_md, eng, reinterpret_cast<void*>(const_cast<float*>(input_tensor.data())));
+        auto iterated_input_memory = 
+               dnnl::memory(original_input_md, eng, reinterpret_cast<void*>(const_cast<float*>(input_tensor.data())));
+        // set output memory to results
+        auto iterated_output_memory = 
+               dnnl::memory(conv4_dst_memory.get_desc(), eng, reinterpret_cast<void*>(const_cast<float*>(results.data())));
+        net_args[net_args.size() - 1][DNNL_ARG_DST] = iterated_output_memory;
         if (input_reordered) {
             net[0] = dnnl::reorder(iterated_input_memory, conv1_src_memory);
             net_args[0][DNNL_ARG_FROM] = iterated_input_memory;
@@ -509,9 +514,6 @@ std::chrono::duration<double> run_inference_onednn(
             net.at(i).execute(s, net_args.at(i));
         }
         s.wait();
-        // copy back //TODO set output memory same as results
-        auto* output_ptr = static_cast<float*>(conv4_dst_memory.get_data_handle());
-        std::memcpy(results.data(), output_ptr, results.size() * sizeof(float));
     }
     LIKWID_MARKER_STOP("onednn");
     return std::chrono::high_resolution_clock::now() - start;
