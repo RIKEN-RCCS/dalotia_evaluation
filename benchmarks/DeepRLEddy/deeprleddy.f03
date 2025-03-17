@@ -35,7 +35,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     type(C_ptr) :: dalotia_file_pointer
 
     ! fixed-size input arrays
-    real(C_float) :: weight_conv1(-1:1,-1:1,-1:1,3,8), weight_conv2(-1:1,-1:1,-1:1,8,8), weight_conv3(-1:1,-1:1,-1:1,8,4), weight_conv4(0:1,0:1,0:1,4,1), bias_conv1(8), bias_conv2(8), bias_conv3(4), bias_conv4(1)
+    real(C_float) :: weight_conv1(-1:1,-1:1,-1:1,3,8), weight_conv2(-1:1,-1:1,-1:1,8,8), weight_conv3(-1:1,-1:1,-1:1,8,4), weight_conv4(2, 2, 2, 4, 1), bias_conv1(8), bias_conv2(8), bias_conv3(4), bias_conv4(1)
     ! intermediate arrays
     real(C_float) :: conv1_input(8, 8, 8, 3),conv1_output(8, 8, 8, 8),conv2_output(4, 4, 4, 8),conv3_output(2, 2, 2, 4), conv4_output
 
@@ -233,7 +233,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
                   ! dir$ vector
                   ! dir$ ivdep
                   ! dir$ simd
-                  do m = -1, 
+                  do m = -1, 1
                     do i = 1, 2
                       do j = 1, 2
                         do k = 1, 2
@@ -257,11 +257,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
           ! dir$ ivdep
           ! dir$ simd
           do c = 1, num_input_channels
-            do l = 0, 1
-              do n = 0, 1
-                do m = 0, 1
+            do l = 1, 2
+              do n = 1, 2
+                do m = 1, 2
                   ! apply 2*2*2 stencil
-                  conv4_output = conv4_output + weight_conv4(m,n,l,c,1) * conv3_output(1+m, 1+n, 1+l, c)
+                  conv4_output = conv4_output + weight_conv4(m,n,l,c,1) * conv3_output(m, n, l, c)
                 end do
               end do
             end do
