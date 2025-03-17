@@ -26,6 +26,28 @@ if (DALOTIA_E_WITH_LIKWID_MARKERS)
   add_dependencies(deeprleddy_cpp likwid::likwid)
 endif(DALOTIA_E_WITH_LIKWID_MARKERS)
 
+if (DALOTIA_E_WITH_FORTRAN)
+    add_executable( deeprleddy_fortran deeprleddy.f03 )
+    set_source_files_properties(
+      deeprleddy.f03
+      PROPERTIES Fortran_PREPROCESS ON
+    )
+    target_include_directories( deeprleddy_fortran PUBLIC $<TARGET_PROPERTY:dalotia_fortran,Fortran_MODULE_DIRECTORY>)
+    set_target_properties(deeprleddy_fortran PROPERTIES LINKER_LANGUAGE Fortran)
+    target_link_libraries(deeprleddy_fortran PRIVATE BLAS::BLAS)
+    target_link_libraries( deeprleddy_fortran PUBLIC dalotia_fortran )
+    target_link_libraries( deeprleddy_fortran PRIVATE cacheflush )
+    if (DALOTIA_E_FOR_MEMORY_TRACE)
+        target_compile_definitions(deeprleddy_fortran PRIVATE DALOTIA_E_FOR_MEMORY_TRACE)
+    endif()
+    if (DALOTIA_E_WITH_LIKWID_MARKERS)
+      target_compile_definitions(deeprleddy_fortran PRIVATE LIKWID_PERFMON)
+      target_include_directories(deeprleddy_fortran PRIVATE ${LIKWID_INCLUDE_DIR})
+      target_link_libraries(deeprleddy_fortran PRIVATE likwid::likwid)
+      add_dependencies(deeprleddy_fortran likwid::likwid)
+    endif(DALOTIA_E_WITH_LIKWID_MARKERS)
+endif (DALOTIA_E_WITH_FORTRAN)
+
 # if (OpenMP_CXX_FOUND)
 #   target_link_libraries(deeprleddy_cpp PUBLIC OpenMP::OpenMP_CXX)
 # endif ()
