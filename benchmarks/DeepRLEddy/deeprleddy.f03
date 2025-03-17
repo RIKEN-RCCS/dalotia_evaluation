@@ -21,7 +21,7 @@ module cacheflush_interface
   end interface
 end module
 
-program subgridles_inference
+program deeprleddy_inference
 use dalotia_c_interface
 use cacheflush_interface
 #ifdef LIKWID_PERFMON
@@ -37,7 +37,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     ! fixed-size input arrays
     real(C_float) :: weight_conv1(-1:1,-1:1,-1:1,3,8), weight_conv2(-1:1,-1:1,-1:1,8,8), weight_conv3(-1:1,-1:1,-1:1,8,4), weight_conv4(0:1,0:1,0:1,4,1), bias_conv1(8), bias_conv2(8), bias_conv3(4), bias_conv4(1)
     ! intermediate arrays
-    real(C_float) :: conv1_input(8, 8, 8, 3),conv1_output(8, 8, 8, 8),conv2_output(8, 8, 8, 8),conv3_output(8, 8, 8, 4), conv4_output
+    real(C_float) :: conv1_input(8, 8, 8, 3),conv1_output(8, 8, 8, 8),conv2_output(4, 4, 4, 8),conv3_output(2, 2, 2, 4), conv4_output
 
     ! increment variables
     integer(kind=int64) :: o, f, i, j, c, k, l, m, n, r, start_time, end_time, count_rate
@@ -138,13 +138,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call likwid_markerStartRegion("DeepRLEddyNet")
 #endif ! LIKWID_PERFMON
     do r = 1, num_repetitions
-        ! apply first convolution layer
-
+        ! apply convolution layers
         do o = 1, num_inputs !concurrent (io = 1:num_inputs)
           num_input_channels = size(weight_conv1, 4)
           num_output_channels = size(weight_conv1, 5)
           do c = 1, num_input_channels
-          ! do f = 1, num_output_channels
             do i = 1, 6
               do j = 1, 6
                 do k = 1, 6
@@ -167,15 +165,12 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
               do l = -1, 1
                 do n = -1, 1
                   do m = -1, 1
+                    ! dir$ vector
+                    ! dir$ ivdep
+                    ! dir$ simd
                     do i = 2, 7
-                    ! dir$ vector
-                    ! dir$ ivdep
-                    ! dir$ simd
-                      do j = 2, 7
-                    ! dir$ vector
-                    ! dir$ ivdep
-                    ! dir$ simd
-                        do k = 2, 7
+                      do j = 1, 8
+                        do k = 1, 8
                           ! apply 3*3*3 stencil
                           conv1_output(k, j, i, f) = conv1_output(k, j, i, f) + weight_conv1(m,n,l,c,f) * conv1_input(k+m, j+n, i+l, c)
                         end do
@@ -190,9 +185,9 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
           conv1_output = max(0.0, conv1_output)
           num_input_channels = size(weight_conv2, 4)
           num_output_channels = size(weight_conv2, 5)
-          do i = 3, 6
-            do j = 3, 6
-              do k = 3, 6
+          do i = 1, 4
+            do j = 1, 4
+              do k = 1, 4
                 ! fill with bias
                 conv2_output(k, j, i, :) = bias_conv2
               end do
@@ -203,11 +198,14 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
               do l = -1, 1
                 do n = -1, 1
                   do m = -1, 1
-                    do i = 3, 6
-                      do j = 3, 6
-                        do k = 3, 6
+                    ! dir$ vector
+                    ! dir$ ivdep
+                    ! dir$ simd
+                    do i = 1, 4
+                      do j = 1, 4
+                          do k = 1, 4
                           ! apply 3*3*3 stencil
-                          conv2_output(k, j, i, f) = conv2_output(k, j, i, f) + weight_conv2(m,n,l,c,f) * conv1_output(k+m, j+n, i+l, c)
+                          conv2_output(k, j, i, f) = conv2_output(k, j, i, f) + weight_conv2(m,n,l,c,f) * conv1_output(k+m+2, j+n+2, i+l+2, c)
                         end do
                       end do
                     end do
@@ -220,9 +218,9 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
           conv2_output = max(0.0, conv2_output)
           num_input_channels = size(weight_conv3, 4)
           num_output_channels = size(weight_conv3, 5)
-          do i = 4, 5
-            do j = 4, 5
-              do k = 4, 5
+          do i = 1, 2
+            do j = 1, 2
+              do k = 1, 2
                 ! fill with bias
                 conv3_output(k, j, i, :) = bias_conv3
               end do
@@ -232,12 +230,15 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
             do c = 1, num_input_channels
               do l = -1, 1
                 do n = -1, 1
-                  do m = -1, 1
-                    do i = 4, 5
-                      do j = 4, 5
-                        do k = 4, 5
+                  ! dir$ vector
+                  ! dir$ ivdep
+                  ! dir$ simd
+                  do m = -1, 
+                    do i = 1, 2
+                      do j = 1, 2
+                        do k = 1, 2
                           ! apply 3*3*3 stencil
-                          conv3_output(k, j, i, f) = conv3_output(k, j, i, f) + weight_conv3(m,n,l,c,f) * conv2_output(k+m, j+n, i+l, c)
+                          conv3_output(k, j, i, f) = conv3_output(k, j, i, f) + weight_conv3(m,n,l,c,f) * conv2_output(k+m+1, j+n+1, i+l+1, c)
                         end do
                       end do
                     end do
@@ -252,12 +253,15 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
           num_output_channels = size(weight_conv4, 5)
           ! fill with bias
           conv4_output = bias_conv4(1)
+          ! dir$ vector
+          ! dir$ ivdep
+          ! dir$ simd
           do c = 1, num_input_channels
             do l = 0, 1
               do n = 0, 1
                 do m = 0, 1
                   ! apply 2*2*2 stencil
-                  conv4_output = conv4_output + weight_conv4(m,n,l,c,1) * conv3_output(4+m, 4+n, 4+l, c)
+                  conv4_output = conv4_output + weight_conv4(m,n,l,c,1) * conv3_output(1+m, 1+n, 1+l, c)
                 end do
               end do
             end do
@@ -314,4 +318,4 @@ subroutine assert_close_f(a, b)
   end if
 end subroutine assert_close_f
 
-end program subgridles_inference
+end program deeprleddy_inference
