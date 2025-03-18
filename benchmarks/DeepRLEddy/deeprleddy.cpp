@@ -359,7 +359,7 @@ std::chrono::duration<double> run_inference_onednn(
     auto conv4_adapted_output_md = dnnl::memory::desc({num_inputs, 1, 1, 1, 1}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::any);
 
     auto conv1_prim_desc = dnnl::convolution_forward::primitive_desc(eng,
-            dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
+            dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_auto,
             adapted_input_md, conv1_adapted_weights_md,
             conv1_adapted_bias_md, conv1_adapted_output_md, conv_strides, conv_yes_to_padding,
             conv_yes_to_padding);
