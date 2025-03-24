@@ -32,6 +32,7 @@ if __name__ == "__main__":
         # with the input length listed between them in the file
         # cf. https://docs.python.org/3/library/re.html#simulating-scanf
         results = re.findall(r"On average:\s*(\S+)\s*s", contents)
+        results = [result[:-1] if result[-1] == "s" else result for result in results]
         results = [float(result) for result in results]
     elif args.type == "memory":
         # the results are listed on a single line,
