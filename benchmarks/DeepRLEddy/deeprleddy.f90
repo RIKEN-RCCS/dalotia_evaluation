@@ -144,26 +144,27 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     do r = 1, num_repetitions
       do b = 0, num_batches-1 !concurrent (b = 1:num_batches)
         ! apply convolution layers
-        do o = 1, batch_size
+        do o = 1, min(batch_size, num_inputs-batch_size*b)
           ! num_input_channels = size(weight_conv1, 4)
           ! num_output_channels = size(weight_conv1, 5)
           do c = 1, size(weight_conv1, 4)
+            ! gcc$ ivdep
             do i = 1, 6
               do j = 1, 6
                 do k = 1, 6
                   ! padding: copy input to padded array
-                  conv1_input(k+1, j+1, i+1, c, o) = all_inputs(k, j, i, c, b*batch_size+o, r) !TODO fix indexing
+                  conv1_input(k+1, j+1, i+1, c, o) = all_inputs(k, j, i, c, b*batch_size+o, r)
                 end do
               end do
             end do
           end do
         end do
         do o = 1, batch_size
-          do i = 2, 7
-            do j = 2, 7
-              do k = 2, 7
+          do i = 1, 6
+            do j = 1, 6
+              do k = 1, 6
                 ! fill with bias
-                conv1_output(k, j, i, :, o) = bias_conv1
+                conv1_output(k+1, j+1, i+1, :, o) = bias_conv1
               end do
             end do
           end do
@@ -174,6 +175,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
               do l = -1, 1
                 do n = -1, 1
                   do m = -1, 1
+                    ! gcc$ vector
                     do i = 2, 7
                       do j = 1, 8
                         do k = 1, 8
@@ -254,9 +256,9 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
         end do
         !reLU
         conv3_output = max(0.0, conv3_output)
+        ! fill with bias
+        conv4_output = bias_conv4(1)
         do o = 1, batch_size
-          ! fill with bias
-          conv4_output(o) = bias_conv4(1)
           do c = 1, size(weight_conv4, 4)
             do l = 1, 2
               do n = 1, 2
@@ -280,7 +282,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call system_clock(count_rate=count_rate)
     write(*,*) conv1_output(2, 2, 2, :, 1)
   
-
     duration = real(end_time-start_time, kind=real64)/real(count_rate, kind=real64)
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
     write(*,*) "Duration: ", duration, "s"

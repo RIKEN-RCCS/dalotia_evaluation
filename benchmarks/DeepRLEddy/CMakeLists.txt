@@ -27,9 +27,9 @@ if (DALOTIA_E_WITH_LIKWID_MARKERS)
 endif(DALOTIA_E_WITH_LIKWID_MARKERS)
 
 if (DALOTIA_E_WITH_FORTRAN)
-    add_executable( deeprleddy_fortran deeprleddy.f03 )
+    add_executable( deeprleddy_fortran deeprleddy.f90 )
     set_source_files_properties(
-      deeprleddy.f03
+      deeprleddy.f90
       PROPERTIES Fortran_PREPROCESS ON
     )
     target_include_directories( deeprleddy_fortran PUBLIC $<TARGET_PROPERTY:dalotia_fortran,Fortran_MODULE_DIRECTORY>)

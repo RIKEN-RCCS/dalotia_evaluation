@@ -22,9 +22,9 @@ else (DALOTIA_E_WITH_LIBTORCH)
 endif(DALOTIA_E_WITH_LIBTORCH)
 
 if (DALOTIA_E_WITH_FORTRAN)
-    add_executable( subgridLES_fortran subgridLES.f03 )
+    add_executable( subgridLES_fortran subgridLES.f90 )
     set_source_files_properties(
-      subgridLES.f03
+      subgridLES.f90
       PROPERTIES Fortran_PREPROCESS ON
     )
     target_include_directories( subgridLES_fortran PUBLIC $<TARGET_PROPERTY:dalotia_fortran,Fortran_MODULE_DIRECTORY>)
