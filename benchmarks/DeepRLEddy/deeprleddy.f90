@@ -38,14 +38,21 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     integer(kind=int64) :: b, o, f, i, j, c, k, l, m, n, r, start_time, end_time, count_rate
     real(kind=real64) :: duration
     integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_batches
-    integer, parameter :: batch_size = 32
+    integer, parameter :: batch_size = 2
 
     ! fixed-size input arrays
-    real(C_float) :: weight_conv1(3,8,-1:1,-1:1,-1:1), weight_conv2(8,8,-1:1,-1:1,-1:1), weight_conv3(8,4,-1:1,-1:1,-1:1), weight_conv4(4, 1, 2, 2, 2), bias_conv1(8), bias_conv2(8), bias_conv3(4), bias_conv4(1)
+    real(C_float) :: weight_conv1(8, 3, -1:1,-1:1,-1:1), &
+                     weight_conv2(8, 8, -1:1,-1:1,-1:1), &
+                     weight_conv3(4, 8, -1:1,-1:1,-1:1), &
+                     weight_conv4(1, 4,  2, 2, 2), &
+                     bias_conv1(8), &
+                     bias_conv2(8), &
+                     bias_conv3(4), &
+                     bias_conv4(1)
     ! intermediate arrays
     real(C_float) :: conv1_input(3, 8, 8, 8, batch_size),conv1_output(8, 8, 8, 8, batch_size),conv2_output(8, 4, 4, 4, batch_size),conv3_output(4, 2, 2, 2, batch_size), conv4_output(batch_size)
 
-    integer :: num_input_features = size(weight_conv1, 1)
+    integer :: num_input_features = size(weight_conv1, 2)
     integer(kind=C_int) :: cacheflush_return_value
 
     ! allocatable input arrays
@@ -78,10 +85,10 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call dalotia_load_tensor(dalotia_file_pointer, "conv2.bias", bias_conv2)
     call dalotia_load_tensor(dalotia_file_pointer, "conv3.bias", bias_conv3)
     call dalotia_load_tensor(dalotia_file_pointer, "conv4.bias", bias_conv4)
-    call dalotia_load_tensor(dalotia_file_pointer, "conv1.weight", weight_conv1, permutation=[4, 5, 1, 2, 3]) ! load as HWFC
-    call dalotia_load_tensor(dalotia_file_pointer, "conv2.weight", weight_conv2, permutation=[4, 5, 1, 2, 3])
-    call dalotia_load_tensor(dalotia_file_pointer, "conv3.weight", weight_conv3, permutation=[4, 5, 1, 2, 3])
-    call dalotia_load_tensor(dalotia_file_pointer, "conv4.weight", weight_conv4, permutation=[4, 5, 1, 2, 3])
+    call dalotia_load_tensor(dalotia_file_pointer, "conv1.weight", weight_conv1, permutation=[5, 4, 1, 2, 3]) ! load as HWCF
+    call dalotia_load_tensor(dalotia_file_pointer, "conv2.weight", weight_conv2, permutation=[5, 4, 1, 2, 3])
+    call dalotia_load_tensor(dalotia_file_pointer, "conv3.weight", weight_conv3, permutation=[5, 4, 1, 2, 3])
+    call dalotia_load_tensor(dalotia_file_pointer, "conv4.weight", weight_conv4, permutation=[5, 4, 1, 2, 3])
     call dalotia_close_file(dalotia_file_pointer)
 #ifdef DALOTIA_E_FOR_MEMORY_TRACE
     ! just allocate
@@ -150,7 +157,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
           do i = 1, 6
             do j = 1, 6
               do k = 1, 6
-                do c = 1, size(weight_conv1, 1)
+                do c = 1, size(weight_conv1, 2)
                   ! padding: copy input to padded array
                   conv1_input(c, k+1, j+1, i+1, o) = all_inputs(c, k, j, i, b*batch_size+o, r)
                 end do
@@ -174,10 +181,10 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
                 do i = 2, 7
                   do j = 1, 8
                     do k = 1, 8
-                      do c = 1, size(weight_conv1, 1)
-                        do f = 1, size(weight_conv1, 2)
+                      do c = 1, size(weight_conv1, 2)
+                        do f = 1, size(weight_conv1, 1)
                           ! apply 3*3*3 stencil
-                          conv1_output(f, k, j, i, o) = conv1_output(f, k, j, i, o) + weight_conv1(c,f,m,n,l) * conv1_input(c, k+m, j+n, i+l, o)
+                          conv1_output(f, k, j, i, o) = conv1_output(f, k, j, i, o) + weight_conv1(f,c,m,n,l) * conv1_input(c, k+m, j+n, i+l, o)
                         end do
                       end do
                     end do
@@ -204,10 +211,10 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
                 do i = 1, 4
                   do j = 1, 4
                     do k = 1, 4
-                        do f = 1, size(weight_conv2, 2)
-                          do c = 1, size(weight_conv2, 1)
+                      do c = 1, size(weight_conv2, 2)
+                        do f = 1, size(weight_conv2, 1)
                           ! apply 3*3*3 stencil
-                          conv2_output(f, k, j, i, o) = conv2_output(f, k, j, i, o) + weight_conv2(c,f, m,n,l) * conv1_output(c, k+m+2, j+n+2, i+l+2, o)
+                          conv2_output(f, k, j, i, o) = conv2_output(f, k, j, i, o) + weight_conv2(f,c, m,n,l) * conv1_output(c, k+m+2, j+n+2, i+l+2, o)
                         end do
                       end do
                     end do
@@ -234,10 +241,10 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
                 do i = 1, 2
                   do j = 1, 2
                     do k = 1, 2
-                      do f = 1, size(weight_conv3, 2)
-                        do c = 1, size(weight_conv3, 1)
+                      do c = 1, size(weight_conv3, 2)
+                        do f = 1, size(weight_conv3, 1)
                           ! apply 3*3*3 stencil
-                          conv3_output(f, k, j, i, o) = conv3_output(f, k, j, i, o) + weight_conv3(c,f,m,n,l) * conv2_output(c, k+m+1, j+n+1, i+l+1, o)
+                          conv3_output(f, k, j, i, o) = conv3_output(f, k, j, i, o) + weight_conv3(f,c,m,n,l) * conv2_output(c, k+m+1, j+n+1, i+l+1, o)
                         end do
                       end do
                     end do
@@ -255,9 +262,9 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
           do l = 1, 2
             do n = 1, 2
               do m = 1, 2
-                do c = 1, size(weight_conv4, 1)
+                do c = 1, size(weight_conv4, 2)
                   ! apply 2*2*2 stencil
-                  conv4_output(o) = conv4_output(o) + weight_conv4(c,1,m,n,l) * conv3_output(c, m, n, l, o)
+                  conv4_output(o) = conv4_output(o) + weight_conv4(1,c,m,n,l) * conv3_output(c, m, n, l, o)
                 end do
               end do
             end do
