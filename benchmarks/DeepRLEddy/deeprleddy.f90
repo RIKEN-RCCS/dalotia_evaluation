@@ -38,7 +38,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     integer(kind=int64) :: b, o, f, i, j, c, k, l, m, n, r, start_time, end_time, count_rate
     real(kind=real64) :: duration
     integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_batches
-    integer, parameter :: batch_size = 16
+    integer, parameter :: batch_size = 32
 
     ! fixed-size input arrays
     real(C_float) :: weight_conv1(-1:1,-1:1,-1:1,3,8), weight_conv2(-1:1,-1:1,-1:1,8,8), weight_conv3(-1:1,-1:1,-1:1,8,4), weight_conv4(2, 2, 2, 4, 1), bias_conv1(8), bias_conv2(8), bias_conv3(4), bias_conv4(1)
@@ -46,7 +46,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     real(C_float) :: conv1_input(8, 8, 8, 3, batch_size),conv1_output(8, 8, 8, 8, batch_size),conv2_output(4, 4, 4, 8, batch_size),conv3_output(2, 2, 2, 4, batch_size), conv4_output(batch_size)
 
     integer :: num_input_features = size(weight_conv1, 4)
-    integer :: num_output_features = 1000
     integer(kind=C_int) :: cacheflush_return_value
 
     ! allocatable input arrays
@@ -168,8 +167,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
               end do
             end do
           end do
-        end do
-        do o = 1, batch_size
           do f = 1, size(weight_conv1, 5)
             do c = 1, size(weight_conv1, 4)
               do l = -1, 1
@@ -201,8 +198,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
               end do
             end do
           end do
-        end do
-        do o = 1, batch_size
           do f = 1, size(weight_conv2, 5)
             do c = 1, size(weight_conv2, 4)
               do l = -1, 1
@@ -233,8 +228,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
               end do
             end do
           end do
-        end do
-        do o = 1, batch_size
           do f = 1, size(weight_conv3, 5)
             do c = 1, size(weight_conv3, 4)
               do l = -1, 1
