@@ -41,11 +41,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     integer, parameter :: batch_size = 32
 
     ! fixed-size input arrays
-    real(C_float) :: weight_conv1(-1:1,-1:1,-1:1,3,8), weight_conv2(-1:1,-1:1,-1:1,8,8), weight_conv3(-1:1,-1:1,-1:1,8,4), weight_conv4(2, 2, 2, 4, 1), bias_conv1(8), bias_conv2(8), bias_conv3(4), bias_conv4(1)
+    real(C_float) :: weight_conv1(3,8,-1:1,-1:1,-1:1), weight_conv2(8,8,-1:1,-1:1,-1:1), weight_conv3(8,4,-1:1,-1:1,-1:1), weight_conv4(4, 1, 2, 2, 2), bias_conv1(8), bias_conv2(8), bias_conv3(4), bias_conv4(1)
     ! intermediate arrays
-    real(C_float) :: conv1_input(8, 8, 8, 3, batch_size),conv1_output(8, 8, 8, 8, batch_size),conv2_output(4, 4, 4, 8, batch_size),conv3_output(2, 2, 2, 4, batch_size), conv4_output(batch_size)
+    real(C_float) :: conv1_input(3, 8, 8, 8, batch_size),conv1_output(8, 8, 8, 8, batch_size),conv2_output(8, 4, 4, 4, batch_size),conv3_output(4, 2, 2, 2, batch_size), conv4_output(batch_size)
 
-    integer :: num_input_features = size(weight_conv1, 4)
+    integer :: num_input_features = size(weight_conv1, 1)
     integer(kind=C_int) :: cacheflush_return_value
 
     ! allocatable input arrays
@@ -78,27 +78,27 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call dalotia_load_tensor(dalotia_file_pointer, "conv2.bias", bias_conv2)
     call dalotia_load_tensor(dalotia_file_pointer, "conv3.bias", bias_conv3)
     call dalotia_load_tensor(dalotia_file_pointer, "conv4.bias", bias_conv4)
-    call dalotia_load_tensor(dalotia_file_pointer, "conv1.weight", weight_conv1)
-    call dalotia_load_tensor(dalotia_file_pointer, "conv2.weight", weight_conv2)
-    call dalotia_load_tensor(dalotia_file_pointer, "conv3.weight", weight_conv3)
-    call dalotia_load_tensor(dalotia_file_pointer, "conv4.weight", weight_conv4)
+    call dalotia_load_tensor(dalotia_file_pointer, "conv1.weight", weight_conv1, permutation=[4, 5, 1, 2, 3]) ! load as HWFC
+    call dalotia_load_tensor(dalotia_file_pointer, "conv2.weight", weight_conv2, permutation=[4, 5, 1, 2, 3])
+    call dalotia_load_tensor(dalotia_file_pointer, "conv3.weight", weight_conv3, permutation=[4, 5, 1, 2, 3])
+    call dalotia_load_tensor(dalotia_file_pointer, "conv4.weight", weight_conv4, permutation=[4, 5, 1, 2, 3])
     call dalotia_close_file(dalotia_file_pointer)
 #ifdef DALOTIA_E_FOR_MEMORY_TRACE
     ! just allocate
-    allocate(inputs(6, 6, 6, 3, num_inputs))
+    allocate(inputs(3, 6, 6, 6, num_inputs)) ! load as NHWC
     allocate(outputs(num_inputs))
-    allocate(all_inputs(6, 6, 6, 3, num_inputs, 1))
+    allocate(all_inputs(3, 6, 6, 6, num_inputs, 1))
 #else
     write (*, *) "Loading inputs from ", trim(filename_input)
     dalotia_file_pointer = dalotia_open_file(trim(filename_input))
-    call dalotia_load_tensor_dense(dalotia_file_pointer, "random_input", inputs)
+    call dalotia_load_tensor_dense(dalotia_file_pointer, "random_input", inputs, permutation=[4, 1, 2, 3, 5]) ! load as NHWC
     call dalotia_close_file(dalotia_file_pointer)
     num_inputs_loaded = size(inputs, 5)
     call assert(num_inputs_loaded == 16*16*16)
-    call assert(size(inputs, 4) == 3)
+    call assert(size(inputs, 4) == 6)
     call assert(size(inputs, 3) == 6)
     call assert(size(inputs, 2) == 6)
-    call assert(size(inputs, 1) == 6)
+    call assert(size(inputs, 1) == 3)
     write (*, *) "Loading outputs from ", trim(filename_output)
     dalotia_file_pointer = dalotia_open_file(trim(filename_output))
     call dalotia_load_tensor_dense(dalotia_file_pointer, "output", outputs)
@@ -107,7 +107,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 
     ! resize inputs/outputs to num_inputs
     write (*, *) "Resizing inputs/outputs to ", num_inputs
-    allocate(temp_inputs(6, 6, 6, 3, num_inputs))
+    allocate(temp_inputs(3, 6, 6, 6, num_inputs))
     allocate(temp_outputs(num_inputs))
     do i = 1, num_inputs
       temp_inputs(:, :, :, :, i) = inputs(:, :, :, :, mod(i-1, num_inputs_loaded)+1)
@@ -129,7 +129,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
       error stop "cacheflush failed"
     endif
 #endif ! DALOTIA_E_FOR_MEMORY_TRACE
-    call assert(size(inputs, 4) == num_input_features)
+    call assert(size(inputs, 1) == num_input_features)
     ! allocate output array the same size as the read one
     allocate(all_outputs(num_inputs, num_repetitions))
 
@@ -144,15 +144,15 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
       do b = 0, num_batches-1 !concurrent (b = 1:num_batches)
         ! apply convolution layers
         do o = 1, min(batch_size, num_inputs-batch_size*b)
-          ! num_input_channels = size(weight_conv1, 4)
-          ! num_output_channels = size(weight_conv1, 5)
-          do c = 1, size(weight_conv1, 4)
-            ! gcc$ ivdep
-            do i = 1, 6
-              do j = 1, 6
-                do k = 1, 6
+          ! num_input_channels = size(weight_conv1, 1)
+          ! num_output_channels = size(weight_conv1, 2)
+          ! gcc$ ivdep
+          do i = 1, 6
+            do j = 1, 6
+              do k = 1, 6
+                do c = 1, size(weight_conv1, 1)
                   ! padding: copy input to padded array
-                  conv1_input(k+1, j+1, i+1, c, o) = all_inputs(k, j, i, c, b*batch_size+o, r)
+                  conv1_input(c, k+1, j+1, i+1, o) = all_inputs(c, k, j, i, b*batch_size+o, r)
                 end do
               end do
             end do
@@ -163,21 +163,21 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
             do j = 1, 6
               do k = 1, 6
                 ! fill with bias
-                conv1_output(k+1, j+1, i+1, :, o) = bias_conv1
+                conv1_output(:, k+1, j+1, i+1, o) = bias_conv1
               end do
             end do
           end do
-          do f = 1, size(weight_conv1, 5)
-            do c = 1, size(weight_conv1, 4)
-              do l = -1, 1
-                do n = -1, 1
-                  do m = -1, 1
-                    ! gcc$ vector
-                    do i = 2, 7
-                      do j = 1, 8
-                        do k = 1, 8
+          do l = -1, 1
+            do n = -1, 1
+              do m = -1, 1
+                ! gcc$ vector
+                do i = 2, 7
+                  do j = 1, 8
+                    do k = 1, 8
+                      do c = 1, size(weight_conv1, 1)
+                        do f = 1, size(weight_conv1, 2)
                           ! apply 3*3*3 stencil
-                          conv1_output(k, j, i, f, o) = conv1_output(k, j, i, f, o) + weight_conv1(m,n,l,c,f) * conv1_input(k+m, j+n, i+l, c, o)
+                          conv1_output(f, k, j, i, o) = conv1_output(f, k, j, i, o) + weight_conv1(c,f,m,n,l) * conv1_input(c, k+m, j+n, i+l, o)
                         end do
                       end do
                     end do
@@ -194,20 +194,20 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
             do j = 1, 4
               do k = 1, 4
                 ! fill with bias
-                conv2_output(k, j, i, :, o) = bias_conv2
+                conv2_output(:, k, j, i, o) = bias_conv2
               end do
             end do
           end do
-          do f = 1, size(weight_conv2, 5)
-            do c = 1, size(weight_conv2, 4)
-              do l = -1, 1
-                do n = -1, 1
-                  do m = -1, 1
-                    do i = 1, 4
-                      do j = 1, 4
-                        do k = 1, 4
+          do l = -1, 1
+            do n = -1, 1
+              do m = -1, 1
+                do i = 1, 4
+                  do j = 1, 4
+                    do k = 1, 4
+                        do f = 1, size(weight_conv2, 2)
+                          do c = 1, size(weight_conv2, 1)
                           ! apply 3*3*3 stencil
-                          conv2_output(k, j, i, f, o) = conv2_output(k, j, i, f, o) + weight_conv2(m,n,l,c,f) * conv1_output(k+m+2, j+n+2, i+l+2, c, o)
+                          conv2_output(f, k, j, i, o) = conv2_output(f, k, j, i, o) + weight_conv2(c,f, m,n,l) * conv1_output(c, k+m+2, j+n+2, i+l+2, o)
                         end do
                       end do
                     end do
@@ -224,20 +224,20 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
             do j = 1, 2
               do k = 1, 2
                 ! fill with bias
-                conv3_output(k, j, i, :, o) = bias_conv3
+                conv3_output(:, k, j, i, o) = bias_conv3
               end do
             end do
           end do
-          do f = 1, size(weight_conv3, 5)
-            do c = 1, size(weight_conv3, 4)
-              do l = -1, 1
-                do n = -1, 1
-                  do m = -1, 1
-                    do i = 1, 2
-                      do j = 1, 2
-                        do k = 1, 2
+          do l = -1, 1
+            do n = -1, 1
+              do m = -1, 1
+                do i = 1, 2
+                  do j = 1, 2
+                    do k = 1, 2
+                      do f = 1, size(weight_conv3, 2)
+                        do c = 1, size(weight_conv3, 1)
                           ! apply 3*3*3 stencil
-                          conv3_output(k, j, i, f, o) = conv3_output(k, j, i, f, o) + weight_conv3(m,n,l,c,f) * conv2_output(k+m+1, j+n+1, i+l+1, c, o)
+                          conv3_output(f, k, j, i, o) = conv3_output(f, k, j, i, o) + weight_conv3(c,f,m,n,l) * conv2_output(c, k+m+1, j+n+1, i+l+1, o)
                         end do
                       end do
                     end do
@@ -252,12 +252,12 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
         ! fill with bias
         conv4_output = bias_conv4(1)
         do o = 1, batch_size
-          do c = 1, size(weight_conv4, 4)
-            do l = 1, 2
-              do n = 1, 2
-                do m = 1, 2
+          do l = 1, 2
+            do n = 1, 2
+              do m = 1, 2
+                do c = 1, size(weight_conv4, 1)
                   ! apply 2*2*2 stencil
-                  conv4_output(o) = conv4_output(o) + weight_conv4(m,n,l,c,1) * conv3_output(m, n, l, c, o)
+                  conv4_output(o) = conv4_output(o) + weight_conv4(c,1,m,n,l) * conv3_output(c, m, n, l, o)
                 end do
               end do
             end do
