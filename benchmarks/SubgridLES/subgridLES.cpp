@@ -80,14 +80,24 @@ std::chrono::duration<double> run_inference_cblas(
     std::string filename = "./weights_SubgridLESNet.safetensors";
     auto dalotia_file = std::unique_ptr<dalotia::TensorFile>(dalotia::make_tensor_file(filename));
     
-    auto [weights_extents, weights] = dalotia_file->load_tensor_dense<float>("fc1.weight");
-    auto [biases_extents, biases] = dalotia_file->load_tensor_dense<float>("fc1.bias");
+    auto [weights_extents_1, weights_1] = dalotia_file->load_tensor_dense<float>("fc1.weight");
+    auto [biases_extents_1, biases_1] = dalotia_file->load_tensor_dense<float>("fc1.bias");
+    auto [weights_extents_2, weights_2] = dalotia_file->load_tensor_dense<float>("fc2.weight");
+    auto [biases_extents_2, biases_2] = dalotia_file->load_tensor_dense<float>("fc2.bias");
     int num_output_features = output_sizes[1];
     int num_input_features = input_sizes[1];
     int num_inputs = input_sizes[0];
-    assert(weights_extents == std::vector<int>({num_input_features, num_output_features}));
-    assert(biases_extents == std::vector<int>({num_output_features})); 
+    int num_hidden_neurons = weights_extents_1[0];
+    assert(num_input_features == 10);
+    assert(num_hidden_neurons == 300);
+    assert(num_output_features == 6);
+    assert(weights_extents_1 == std::vector<int>({num_hidden_neurons, num_input_features}));
+    assert(biases_extents_1 == std::vector<int>({num_hidden_neurons})); 
+    assert(weights_extents_2 == std::vector<int>({num_output_features, num_hidden_neurons}));
+    assert(biases_extents_2 == std::vector<int>({num_output_features})); 
     assert(output_sizes == std::vector<int>({num_inputs, num_output_features}));
+
+    dalotia::vector<float> hidden_values(num_hidden_neurons*num_inputs);
 
     LIKWID_MARKER_START("cblas");
     const auto start = std::chrono::high_resolution_clock::now();
@@ -95,16 +105,31 @@ std::chrono::duration<double> run_inference_cblas(
         auto& inputs = input_tensors[r];
         auto& results = result_tensors[r];
 
-        // fill results vector with bias
-        for (size_t i = 0; i < output_sizes[0]; ++i) {
-            for (size_t j = 0; j < output_sizes[1]; ++j) {
-                results[i * output_sizes[1] + j] = biases[j];
+        // fill hidden vector with bias
+        for (size_t i = 0; i < num_inputs; ++i) {
+            for (size_t j = 0; j < num_hidden_neurons; ++j) {
+                hidden_values[i * num_hidden_neurons + j] = biases_1[j];
             }
         }
         // todo compare to cblasRowMajor 
-        cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, num_output_features, 
-                    num_inputs, num_input_features, 1.0, weights.data(), 
+        cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, num_hidden_neurons, 
+                    num_inputs, num_input_features, 1.0, weights_1.data(), 
                     num_input_features, inputs.data(), num_input_features, 1.0, 
+                    hidden_values.data(), num_hidden_neurons);
+        // ReLU
+        for (auto& value : hidden_values) {
+            value = value < 0. ? 0. : value;
+        }
+
+        // fill results vector with bias
+        for (size_t i = 0; i < output_sizes[0]; ++i) {
+            for (size_t j = 0; j < output_sizes[1]; ++j) {
+                results[i * output_sizes[1] + j] = biases_2[j];
+            }
+        }
+        cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, num_output_features, 
+                    num_inputs, num_hidden_neurons, 1.0, weights_2.data(), 
+                    num_hidden_neurons, hidden_values.data(), num_hidden_neurons, 1.0, 
                     results.data(), num_output_features);
     }
     LIKWID_MARKER_STOP("cblas");
@@ -134,9 +159,9 @@ int main(int argc, char *argv[]) {
         dalotia::load_tensor_dense<float>("./output_SubgridLESNet.safetensors", "output",
                                           dalotia_WeightFormat::dalotia_float_32, dalotia_Ordering::dalotia_C_ordering);
     assert(output_extents == std::vector<int>({16*16*16, 6}));
-    assert_close(expected_output_tensor[0], 1.0331);
-    assert_close(expected_output_tensor[1], 0.0446);
-    assert_close(expected_output_tensor[6], 0.8264);
+    assert_close(expected_output_tensor[0], 2.84722);
+    assert_close(expected_output_tensor[1], 0.524039);
+    assert_close(expected_output_tensor[6], 2.55544);
 
     // if the desired input length is different, we need to truncate or repeat the input tensor
     if (input_extents[0] != num_inputs) {
@@ -199,7 +224,7 @@ int main(int argc, char *argv[]) {
     // check correctness of the output
     for (const auto& results : result_tensors) {
         for (size_t i = 0; i < results.size(); ++i) {
-            if (results[i] != expected_output_tensor[i]) {
+            if (std::abs(results[i] - expected_output_tensor[i]) > 1e-6) {
                 std::cerr << "results[" << i << "] = " << results[i] << 
                                 " != expected_output_tensor[" << i << "] = " << expected_output_tensor[i] << std::endl;
                 throw std::runtime_error("results != expected_output_tensor");

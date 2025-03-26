@@ -66,13 +66,16 @@ class SubgridLESNet(nn.Module):
         # In this paper, the nine components of the velocity gradient tensor and the filter width  
         # are used as input features (nI = 10) in the ANN,
         #The output labels of the ANN are the six components of the SGS stress tensor
-        self.fc1 = nn.Linear(10, 6)
+        self.fc1 = nn.Linear(10, 300)
+        self.fc2 = nn.Linear(300, 6)
 
         pytorch_layer_init_arange(self.fc1, 3)
+        pytorch_layer_init_arange(self.fc2, 1)
 
     def forward(self, x):
         x = self.fc1(x)
         x = F.relu(x)
+        x = self.fc2(x)
         return x
 
 # %%
@@ -219,8 +222,8 @@ def load_torch_model_file(torch_module):
 
 # %%
 if __name__ == "__main__":
-    n = SubgridLESNet() # 
     n = DeepRLEddyNet() #DefaultNet()
+    n = SubgridLESNet() # 
     save = True
 
     torch.jit.optimize_for_inference(torch.jit.script(n.eval()))

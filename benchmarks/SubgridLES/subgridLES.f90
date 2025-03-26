@@ -30,23 +30,24 @@ use likwid
 use,intrinsic::ISO_C_BINDING, only : C_float, C_double
 use,intrinsic :: iso_fortran_env, only : int64,real64
   implicit none
-    character(len=100) :: filename_model, filename_input, filename_output, tensor_name_fc1
+    character(len=100) :: filename_model, filename_input, filename_output
     character(len=8), dimension(:), allocatable :: args
     type(C_ptr) :: dalotia_file_pointer
 
     ! fixed-size input arrays
-    real(C_float) :: weight_fc1(10, 6), bias_fc1(6)
+    real(C_float) :: weight_fc1(10, 300), bias_fc1(300), weight_fc2(300, 6), bias_fc2(6)
 
     ! increment variables
     integer(kind=int64) :: o, f, i, start_time, end_time, count_rate
     real(kind=real64) :: duration
     integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions
     integer :: num_input_features = size(weight_fc1, 1)
-    integer :: num_output_features = size(weight_fc1, 2)
+    integer :: num_hidden_neurons = size(weight_fc1, 2)
+    integer :: num_output_features = size(weight_fc2, 2)
     integer(kind=C_int) :: cacheflush_return_value
 
     ! allocatable input arrays
-    real(C_float), dimension(:, :), allocatable :: inputs, temp_inputs, fc1_output, outputs, temp_outputs
+    real(C_float), dimension(:, :), allocatable :: inputs, temp_inputs, fc1_output, fc2_output, outputs, temp_outputs
     real(C_float), dimension(:, :, :), allocatable :: all_inputs, all_outputs
 
     num_inputs = 16*16*16
@@ -66,19 +67,26 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     filename_model = "./weights_SubgridLESNet.safetensors"
     filename_input = "./input_SubgridLESNet.safetensors"
     filename_output = "./output_SubgridLESNet.safetensors"
-    tensor_name_fc1 = "fc1"
 
     dalotia_file_pointer = dalotia_open_file(trim(filename_model))
-    call dalotia_load_tensor(dalotia_file_pointer, trim(tensor_name_fc1) //".bias", bias_fc1)
-    call dalotia_load_tensor(dalotia_file_pointer, trim(tensor_name_fc1)//".weight", weight_fc1)
+    call dalotia_load_tensor(dalotia_file_pointer, "fc1.bias", bias_fc1)
+    call dalotia_load_tensor(dalotia_file_pointer, "fc1.weight", weight_fc1)
+    call dalotia_load_tensor(dalotia_file_pointer, "fc2.bias", bias_fc2)
+    call dalotia_load_tensor(dalotia_file_pointer, "fc2.weight", weight_fc2)
     call dalotia_close_file(dalotia_file_pointer)
 
     call assert_close_f(weight_fc1(1,1), 0.3333)
     call assert_close_f(weight_fc1(10,1), 0.0833)
-    call assert_close_f(weight_fc1(1,6), 0.0188)
-    call assert_close_f(weight_fc1(10,6), 0.0161)
+    call assert_close_f(weight_fc1(1,300), 0.00033)
+    call assert_close_f(weight_fc1(10,300), 0.00033)
     call assert_close_f(bias_fc1(1), 0.3333)
-    call assert_close_f(bias_fc1(6), 0.1250)
+    call assert_close_f(bias_fc1(300), 0.0033)
+    call assert_close_f(weight_fc2(1,1), 1.)
+    call assert_close_f(weight_fc2(300,1), 0.00331)
+    call assert_close_f(weight_fc2(1,6), 0.00066)
+    call assert_close_f(weight_fc2(300,6), 0.000556)
+    call assert_close_f(bias_fc2(1), 1.)
+    call assert_close_f(bias_fc2(6), 0.16667)
 
 #ifdef DALOTIA_E_FOR_MEMORY_TRACE
     ! just allocate
@@ -99,9 +107,9 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     dalotia_file_pointer = dalotia_open_file(trim(filename_output))
     call dalotia_load_tensor_dense(dalotia_file_pointer, "output", outputs)
     call dalotia_close_file(dalotia_file_pointer)
-    call assert_close_f(outputs(1,1), 1.0919)
-    call assert_close_f(outputs(2,1), 0.5316)
-    call assert_close_f(outputs(1,2), 0.8851)
+    call assert_close_f(outputs(1,1), 2.847215)
+    call assert_close_f(outputs(2,1), 0.5240393)
+    call assert_close_f(outputs(1,2), 2.555436)
     call assert(size(outputs, 2) == num_inputs_loaded)
     call assert(size(outputs, 1) == num_output_features)
 
@@ -125,7 +133,8 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 #endif ! DALOTIA_E_FOR_MEMORY_TRACE
     call assert(size(inputs, 1) == num_input_features)
     ! allocate output array the same size as the read one
-    allocate(fc1_output(num_output_features, num_inputs))
+    allocate(fc1_output(num_hidden_neurons, num_inputs))
+    allocate(fc2_output(num_output_features, num_hidden_neurons))
     allocate(all_outputs(num_output_features, num_inputs, num_repetitions))
 
     call system_clock(start_time)
@@ -140,16 +149,25 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
           ! fill with bias
           fc1_output(:,o) = bias_fc1(:)
         end do
-        ! this here is more concise but slower: 
+        ! this here is more concise but slower due to intermediate arrays: 
         ! fc1_output = spread(bias_fc1, 2, num_inputs)
         ! fc1_output = matmul(transpose(weight_fc1), all_inputs(:, :, i)) + fc1_output
 
-        call sgemm('T', 'N', num_output_features, num_inputs, num_input_features, 1.0, &
+        call sgemm('T', 'N', num_hidden_neurons, num_inputs, num_input_features, 1.0, &
                   weight_fc1, num_input_features, all_inputs(:, :, i), num_input_features,  1.0, &
-                  fc1_output, num_output_features)
+                  fc1_output, num_hidden_neurons)
 
         ! reLU:
-        all_outputs(:,:,i) = max(0.0, fc1_output)
+        fc1_output = max(0.0, fc1_output)
+  
+        do o = 1, num_inputs
+          fc2_output(:,o) = bias_fc2(:)
+        end do
+
+        call sgemm('T', 'N', num_output_features, num_inputs, num_hidden_neurons, 1.0, &
+                  weight_fc2, num_hidden_neurons, fc1_output, num_hidden_neurons,  1.0, &
+                  fc2_output, num_output_features)
+        all_outputs(:,:,i) = fc2_output
     end do
 #ifdef LIKWID_PERFMON
     call likwid_markerStopRegion("SubgridLESNet")
