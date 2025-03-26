@@ -134,7 +134,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call assert(size(inputs, 1) == num_input_features)
     ! allocate output array the same size as the read one
     allocate(fc1_output(num_hidden_neurons, num_inputs))
-    allocate(fc2_output(num_output_features, num_hidden_neurons))
+    allocate(fc2_output(num_output_features, num_inputs))
     allocate(all_outputs(num_output_features, num_inputs, num_repetitions))
 
     call system_clock(start_time)
