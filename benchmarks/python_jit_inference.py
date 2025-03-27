@@ -20,11 +20,13 @@ class SubgridLESNet(nn.Module):
         # In this paper, the nine components of the velocity gradient tensor and the filter width
         # are used as input features (nI = 10) in the ANN,
         # The output labels of the ANN are the six components of the SGS stress tensor
-        self.fc1 = nn.Linear(10, 6)
+        self.fc1 = nn.Linear(10, 300)
+        self.fc2 = nn.Linear(300, 6)
 
     def forward(self, x):
         x = self.fc1(x)
         x = F.relu(x)
+        x = self.fc2(x)
         return x
 
 

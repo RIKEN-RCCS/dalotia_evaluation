@@ -50,7 +50,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
                      bias_conv3(4), &
                      bias_conv4(1)
     ! intermediate arrays
-    real(C_float) :: conv1_input(3, 8, 8, 8, batch_size),conv1_output(8, 8, 8, 8, batch_size),conv2_output(8, 4, 4, 4, batch_size),conv3_output(4, 2, 2, 2, batch_size), conv4_output(batch_size)
+    real(C_float) :: conv1_input(3, 8, 8, 8, batch_size), &
+                     conv1_output(8, 8, 8, 8, batch_size), &
+                     conv2_output(8, 4, 4, 4, batch_size), &
+                     conv3_output(4, 2, 2, 2, batch_size), &
+                     conv4_output(batch_size)
 
     integer :: num_input_features = size(weight_conv1, 2)
     integer(kind=C_int) :: cacheflush_return_value
