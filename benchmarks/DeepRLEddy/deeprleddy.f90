@@ -96,20 +96,20 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call dalotia_close_file(dalotia_file_pointer)
 #ifdef DALOTIA_E_FOR_MEMORY_TRACE
     ! just allocate
-    allocate(inputs(3, 6, 6, 6, num_inputs)) ! load as NHWC
+    allocate(inputs(6, 6, 6, 3, num_inputs))
     allocate(outputs(num_inputs))
-    allocate(all_inputs(3, 6, 6, 6, num_inputs, 1))
+    allocate(all_inputs(6, 6, 6, 3, num_inputs, 1))
 #else
     write (*, *) "Loading inputs from ", trim(filename_input)
     dalotia_file_pointer = dalotia_open_file(trim(filename_input))
-    call dalotia_load_tensor_dense(dalotia_file_pointer, "random_input", inputs, permutation=[4, 1, 2, 3, 5]) ! load as NHWC
+    call dalotia_load_tensor_dense(dalotia_file_pointer, "random_input", inputs)
     call dalotia_close_file(dalotia_file_pointer)
     num_inputs_loaded = size(inputs, 5)
     call assert(num_inputs_loaded == 16*16*16)
-    call assert(size(inputs, 4) == 6)
+    call assert(size(inputs, 4) == 3)
     call assert(size(inputs, 3) == 6)
     call assert(size(inputs, 2) == 6)
-    call assert(size(inputs, 1) == 3)
+    call assert(size(inputs, 1) == 6)
     write (*, *) "Loading outputs from ", trim(filename_output)
     dalotia_file_pointer = dalotia_open_file(trim(filename_output))
     call dalotia_load_tensor_dense(dalotia_file_pointer, "output", outputs)
@@ -118,7 +118,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 
     ! resize inputs/outputs to num_inputs
     write (*, *) "Resizing inputs/outputs to ", num_inputs
-    allocate(temp_inputs(3, 6, 6, 6, num_inputs))
+    allocate(temp_inputs(6, 6, 6, 3, num_inputs))
     allocate(temp_outputs(num_inputs))
     do i = 1, num_inputs
       temp_inputs(:, :, :, :, i) = inputs(:, :, :, :, mod(i-1, num_inputs_loaded)+1)
@@ -140,7 +140,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
       error stop "cacheflush failed"
     endif
 #endif ! DALOTIA_E_FOR_MEMORY_TRACE
-    call assert(size(inputs, 1) == num_input_features)
+    call assert(size(inputs, 4) == num_input_features)
     ! allocate output array the same size as the read one
     allocate(all_outputs(num_inputs, num_repetitions))
 
@@ -162,8 +162,8 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
             do j = 1, 6
               do k = 1, 6
                 do c = 1, size(weight_conv1, 2)
-                  ! padding: copy input to padded array
-                  conv1_input(c, k+1, j+1, i+1, o) = all_inputs(c, k, j, i, b*batch_size+o, r)
+                  ! padding: copy input to padded array in NHWDC format
+                  conv1_input(c, k+1, j+1, i+1, o) = all_inputs(k, j, i, c, b*batch_size+o, r)
                 end do
               end do
             end do

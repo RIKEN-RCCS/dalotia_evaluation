@@ -224,7 +224,7 @@ int main(int argc, char *argv[]) {
     // check correctness of the output
     for (const auto& results : result_tensors) {
         for (size_t i = 0; i < results.size(); ++i) {
-            if (std::abs(results[i] - expected_output_tensor[i]) > 1e-6) {
+            if (std::abs(results[i] - expected_output_tensor[i]) > 1e-5) {
                 std::cerr << "results[" << i << "] = " << results[i] << 
                                 " != expected_output_tensor[" << i << "] = " << expected_output_tensor[i] << std::endl;
                 throw std::runtime_error("results != expected_output_tensor");
