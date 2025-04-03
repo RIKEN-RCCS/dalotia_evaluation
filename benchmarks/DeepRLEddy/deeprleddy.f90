@@ -35,9 +35,9 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     type(C_ptr) :: dalotia_file_pointer
 
     ! increment variables
-    integer(kind=int64) :: o, i, r, start_time, end_time, count_rate
+    integer(kind=int64) :: b, o, i, r, start_time, end_time, count_rate
     real(kind=real64) :: duration
-    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions
+    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_batches
 
     ! fixed-size input arrays
     real(C_float) :: weight_conv1(8, 3, -1:1,-1:1,-1:1), &
@@ -57,6 +57,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     real(C_float), dimension(:, :), allocatable :: all_outputs
     real(C_float), dimension(:, :, :, :, :), allocatable :: inputs, temp_inputs
     real(C_float), dimension(:, :, :, :, :, :), allocatable :: all_inputs
+    integer, parameter :: batch_size = 2
 
 
     num_inputs = 16*16*16
@@ -142,8 +143,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call likwid_markerRegisterRegion("DeepRLEddyNet")
     call likwid_markerStartRegion("DeepRLEddyNet")
 #endif ! LIKWID_PERFMON
+    num_batches = ceiling(real(num_inputs) / batch_size)
     do r = 1, num_repetitions
-      call inference(r, all_inputs, all_outputs, weight_conv1, weight_conv2, weight_conv3, weight_conv4, bias_conv1, bias_conv2, bias_conv3, bias_conv4)
+      do b = 0, num_batches-1 !concurrent (b = 1:num_batches)
+        all_outputs(b*batch_size+1:b*(batch_size+1),r) = batch_inference(b, r, all_inputs, weight_conv1, weight_conv2, weight_conv3, weight_conv4, bias_conv1, bias_conv2, bias_conv3, bias_conv4)
+      end do
     end do
 #ifdef LIKWID_PERFMON
     call likwid_markerStopRegion("DeepRLEddyNet")
@@ -167,10 +171,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 #endif ! not DALOTIA_E_FOR_MEMORY_TRACE
 contains
 
-subroutine inference(r, all_inputs, all_outputs, weight_conv1, weight_conv2, weight_conv3, weight_conv4, bias_conv1, bias_conv2, bias_conv3, bias_conv4)
-  integer(kind=int64), intent(in) :: r
+pure function batch_inference(b, r, all_inputs, weight_conv1, weight_conv2, weight_conv3, weight_conv4, bias_conv1, bias_conv2, bias_conv3, bias_conv4) result(conv4_output)
+  implicit none
+  integer(kind=int64), intent(in) :: b, r
+  integer, parameter :: batch_size = 2
   real(C_float), dimension(:, :, :, :, :, :), intent(in) :: all_inputs
-  real(C_float), dimension(:, :), intent(inout) :: all_outputs
   ! fixed-size weight arrays
   real(C_float), intent(in) :: weight_conv1(8, 3, -1:1,-1:1,-1:1), &
                     weight_conv2(8, 8, -1:1,-1:1,-1:1), &
@@ -182,9 +187,7 @@ subroutine inference(r, all_inputs, all_outputs, weight_conv1, weight_conv2, wei
                     bias_conv4(1)
 
   ! increment variables
-  integer(kind=int64) :: b, o, f, i, j, c, k, l, m, n
-  integer ::  num_inputs, num_batches
-  integer, parameter :: batch_size = 2
+  integer(kind=int64) :: o, f, i, j, c, k, l, m, n
 
   ! intermediate arrays
   real(C_float) :: conv1_input(3, 8, 8, 8, batch_size), &
@@ -193,9 +196,8 @@ subroutine inference(r, all_inputs, all_outputs, weight_conv1, weight_conv2, wei
                     conv3_output(4, 2, 2, 2, batch_size), &
                     conv4_output(batch_size)
 
+  integer :: num_inputs
   num_inputs = size(all_inputs, 5)
-  num_batches = ceiling(real(num_inputs) / batch_size)
-  do b = 0, num_batches-1 !concurrent (b = 1:num_batches)
     ! apply convolution layers
     do o = 1, min(batch_size, num_inputs-batch_size*b)
       ! num_input_channels = size(weight_conv1, 1)
@@ -316,9 +318,8 @@ subroutine inference(r, all_inputs, all_outputs, weight_conv1, weight_conv2, wei
       end do
     end do
     ! half-sigmoid
-    all_outputs(b*batch_size+1:b*(batch_size+1),r) = 0.5 * 1. / (1. + exp(-conv4_output));
-  end do
-end subroutine inference
+    conv4_output = 0.5 * 1. / (1. + exp(-conv4_output))
+end function batch_inference
 
 !cf. https://stackoverflow.com/a/55376595
 subroutine raise_exception(message)
