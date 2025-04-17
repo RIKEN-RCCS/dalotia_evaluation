@@ -26,8 +26,8 @@ FetchContent_Declare(
   GIT_TAG main # TODO replace with release tag
   # CMAKE_ARGS  # I believe these are ignored, set like below
   #       -D DALOTIA_BUILD_TESTS=ON
-  # FIND_PACKAGE_ARGS
-  OVERRIDE_FIND_PACKAGE
+  FIND_PACKAGE_ARGS
+  # OVERRIDE_FIND_PACKAGE
 )
 set(DALOTIA_BUILD_TESTS OFF)
 FetchContent_MakeAvailable(dalotia)
