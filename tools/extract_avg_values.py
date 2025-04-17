@@ -43,6 +43,13 @@ if __name__ == "__main__":
         results = re.findall(r"\|\s*Energy \[J\]\s*\|\s*(\d+\.?\d*)\s*\|", contents)
         num_repetitions = 1000
         results = [float(result) / num_repetitions for result in results]
+    elif args.type == "energy_both":
+        results = re.findall(r"\|\s*Energy \[J\]\s*\|\s*(\d+\.?\d*)\s*\|", contents)
+        results_dram = re.findall(r"\|\s*Energy DRAM \[J\]\s*\|\s*(\d+\.?\d*)\s*\|", contents)
+        num_repetitions = 1000
+        [print("ratio", float(result_dram)/float(result)) for result, result_dram in zip(results,results_dram)]
+        results = [(float(result)+float(result_dram)) / num_repetitions for result, result_dram in zip(results,results_dram)]
+        assert False
     elif args.type == "flops":
         results = re.findall(r"\|\s*SP \[MFLOP/s\]\s*\|\s*(\d+\.?\d*)\s*\|", contents)
         results = [float(result) for result in results]
