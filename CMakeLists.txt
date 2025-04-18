@@ -20,21 +20,25 @@ message(STATUS "CMAKE BUILD TYPE: ${CMAKE_BUILD_TYPE}")
 
 include(ExternalProject)
 include(FetchContent)
-FetchContent_Declare(
-  dalotia
-  GIT_REPOSITORY git@github.com:RIKEN-RCCS/dalotia.git #TODO replace w/ https
-  GIT_TAG main # TODO replace with release tag
-  # CMAKE_ARGS  # I believe these are ignored, set like below
-  #       -D DALOTIA_BUILD_TESTS=ON
-  FIND_PACKAGE_ARGS
-  # OVERRIDE_FIND_PACKAGE
-)
-set(DALOTIA_BUILD_TESTS OFF)
-FetchContent_MakeAvailable(dalotia)
-FetchContent_GetProperties(dalotia SOURCE_DIR DALOTIA_CPP_INCLUDE_DIR BINARY_DIR DALOTIA_CPP_LIBRARY)
-message(STATUS "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
-message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
+if (NOT DEFINED dalotia_DIR OR dalotia_DIR MATCHES "fetch")
+  FetchContent_Declare(
+    dalotia
+    GIT_REPOSITORY https://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@github.com/RIKEN-RCCS/dalotia.git #TODO replace w/ https
+    GIT_TAG prepare_release # TODO replace with 1.0.0
+    # CMAKE_ARGS  # I believe these are ignored, set like below
+    #       -D DALOTIA_BUILD_TESTS=ON
+    OVERRIDE_FIND_PACKAGE
+  )
+  set(DALOTIA_BUILD_TESTS OFF)
+  FetchContent_MakeAvailable(dalotia)
+  FetchContent_GetProperties(dalotia SOURCE_DIR DALOTIA_CPP_INCLUDE_DIR BINARY_DIR DALOTIA_CPP_LIBRARY)
+  message(STATUS "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
+  message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
+else()
+  find_package(safetensors-cpp REQUIRED)
+endif()  
 find_package(dalotia REQUIRED)
+
 if(DALOTIA_E_WITH_LIBTORCH)
   # the default pip-downloaded libtorch is built with CXX11_ABI=0 -> to use it everything else needs that too
   set(DALOTIA_E_USE_OLD_ABI ON)
@@ -157,7 +161,7 @@ if (DALOTIA_E_WITH_LIBTORCH)
   # set(USE_NUMA OFF) #???
   # # needs loaded: python@3.8.0: py-pyyaml, py-typing-extensions
   # FetchContent_MakeAvailable(libtorch)
-  find_package (Torch PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../pytorch NO_DEFAULT_PATH)
+  find_package(Torch PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../venv/lib64/python3.12/site-packages/ NO_DEFAULT_PATH)
   find_package(Torch REQUIRED)
   set(BUILD_SHARED_LIBS OFF)
 
