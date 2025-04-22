@@ -24,7 +24,7 @@ if (NOT DEFINED dalotia_DIR OR dalotia_DIR MATCHES "fetch")
   FetchContent_Declare(
     dalotia
     GIT_REPOSITORY https://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@github.com/RIKEN-RCCS/dalotia.git #TODO replace w/ https
-    GIT_TAG prepare_release # TODO replace with 1.0.0
+    GIT_TAG v1.0.0
     # CMAKE_ARGS  # I believe these are ignored, set like below
     #       -D DALOTIA_BUILD_TESTS=ON
     OVERRIDE_FIND_PACKAGE
