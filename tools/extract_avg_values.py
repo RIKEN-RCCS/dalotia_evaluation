@@ -69,7 +69,16 @@ if __name__ == "__main__":
     """
 
     num_variants = len(results) // len(input_sizes)
-    columns = ["input_size"] + [str(i + 1) for i in range(num_variants)]
+    columns = [
+               "input_size","deeprleddy-intel-open-fortran","deeprleddy-intel-open-dnnl",
+               "deeprleddy-intel-open-libtorch","deeprleddy-intel-open-pytorch",
+               "subgridles-intel-open-cpp","subgridles-intel-open-fortran",
+               "subgridles-intel-open-pytorch",
+               "deeprleddy-intel-mkl-fortran","deeprleddy-intel-mkl-dnnl",
+               "deeprleddy-intel-mkl-libtorch","deeprleddy-intel-mkl-pytorch",
+               "subgridles-intel-mkl-cpp","subgridles-intel-mkl-fortran",
+               "subgridles-intel-mkl-pytorch",
+              ]
     data = []
     for i in range(len(input_sizes)):
         data.append(
