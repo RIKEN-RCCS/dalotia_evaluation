@@ -3,6 +3,33 @@ import pandas as pd
 import argparse as arg
 import re
 
+
+def data_frame_from_file(file_name, label_pattern, value_pattern):
+    data = {}
+    current_label = None
+    with open(file_name, "r") as f:
+        for line in f:
+            label = re.findall(label_pattern, line)
+            if len(label) > 0:
+                current_label = label[0]
+                if current_label not in data:
+                    data[current_label] = []
+            # Check if the line matches the value pattern
+            elif re.search(value_pattern, line):
+                values = re.findall(value_pattern, line)
+                for value in values:
+                    if current_label is not None:
+                        data[current_label].append(float(value))
+                    else:
+                        print(value)
+
+    # Convert to DataFrame
+    df = pd.DataFrame.from_dict(data, orient="index")
+    df.index.name = "label"
+    print("test \n", df)
+    return df
+
+
 # %%
 if __name__ == "__main__":
     parser = arg.ArgumentParser()
@@ -18,75 +45,81 @@ if __name__ == "__main__":
 
     with open(args.input, "r") as f:
         contents = f.read()
-    input_sizes = re.findall(r"input_size (\d+)", contents)
+    label_pattern = r"input_size (\d+)"
+    input_sizes = re.findall(label_pattern, contents)
     input_sizes = [int(size) for size in input_sizes]
     print(input_sizes)
 
-    # later: manually map to column names:
-    # input-size, deeprleddy-gcc-open-dnnl, deeprleddy-gcc-open-libtorch, deeprleddy-gcc-open-pytorch,
-    # subgridles-gcc-open-cpp, subgridles-gcc-open-fortran,
-    # deeprleddy-gcc-mkl-dnnl, subgridles-gcc-open-libtorch, subgridles-gcc-open-pytorch, 
-    # subgridles-gcc-mkl-cpp,subgridles-gcc-mkl-fortran
+    columns = [
+        "input_size",
+        "deeprleddy-intel-open-fortran",
+        "deeprleddy-intel-open-dnnl",
+        "deeprleddy-intel-open-libtorch",
+        "deeprleddy-intel-open-pytorch",
+        "subgridles-intel-open-cpp",
+        "subgridles-intel-open-fortran",
+        "subgridles-intel-open-libtorch",
+        "subgridles-intel-open-pytorch",
+        "deeprleddy-intel-mkl-fortran",
+        "deeprleddy-intel-mkl-dnnl",
+        "deeprleddy-intel-mkl-libtorch",
+        "deeprleddy-intel-mkl-pytorch",
+        "subgridles-intel-mkl-cpp",
+        "subgridles-intel-mkl-fortran",
+        "subgridles-intel-mkl-libtorch",
+        "subgridles-intel-mkl-pytorch",
+    ]
     if args.type == "runtime":
         # find all occurrences of On average: followed by a number,
         # with the input length listed between them in the file
         # cf. https://docs.python.org/3/library/re.html#simulating-scanf
-        results = re.findall(r"On average:\s*(\S+)\s*s", contents)
-        results = [result[:-1] if result[-1] == "s" else result for result in results]
-        results = [float(result) for result in results]
+        value_pattern = r"On average:\s*(\S+)\s*s"
+        result_df = data_frame_from_file(args.input, label_pattern, value_pattern)
     elif args.type == "memory":
         # the results are listed on a single line,
         # and input lengths are listed on some line above
-        results = re.findall(r"\n(\d+)", contents)
-        results = [int(result) for result in results]
+        value_pattern = r"\n(\d+)"
+        result_df = data_frame_from_file(args.input, label_pattern, value_pattern)
     elif args.type == "energy":
-        results = re.findall(r"\|\s*Energy \[J\]\s*\|\s*(\d+\.?\d*)\s*\|", contents)
+        value_pattern = r"\|\s*Energy \[J\]\s*\|\s*(\d+\.?\d*)\s*\|"
+        result_df = data_frame_from_file(args.input, label_pattern, value_pattern)
         num_repetitions = 1000
-        results = [float(result) / num_repetitions for result in results]
+        # divide the results by the number of repetitions
+        result_df = result_df / num_repetitions
     elif args.type == "energy_both":
-        results = re.findall(r"\|\s*Energy \[J\]\s*\|\s*(\d+\.?\d*)\s*\|", contents)
-        results_dram = re.findall(r"\|\s*Energy DRAM \[J\]\s*\|\s*(\d+\.?\d*)\s*\|", contents)
+        value_pattern = r"\|\s*Energy \[J\]\s*\|\s*(\d+\.?\d*)\s*\|"
+        result_df = data_frame_from_file(args.input, label_pattern, value_pattern)
+        value_pattern_dram = r"\|\s*Energy DRAM \[J\]\s*\|\s*(\d+\.?\d*)\s*\|"
+        result_df_dram = data_frame_from_file(
+            args.input, label_pattern, value_pattern_dram
+        )
         num_repetitions = 1000
-        [print("ratio", float(result_dram)/float(result)) for result, result_dram in zip(results,results_dram)]
-        results = [(float(result)+float(result_dram)) / num_repetitions for result, result_dram in zip(results,results_dram)]
+        [
+            print("ratio", float(result_dram) / float(result))
+            for result, result_dram in zip(result_df, result_df_dram)
+        ]
         assert False
     elif args.type == "flops":
-        results = re.findall(r"\|\s*SP \[MFLOP/s\]\s*\|\s*(\d+\.?\d*)\s*\|", contents)
-        results = [float(result) for result in results]
+        value_pattern = r"\|\s*SP \[MFLOP/s\]\s*\|\s*(\d+\.?\d*)\s*\|"
+        result_df = data_frame_from_file(args.input, label_pattern, value_pattern)
     elif args.type == "intensity":
-        results = re.findall(r"\|\s*Operational intensity \[FLOP/Byte\]\s*\|\s*(\d+\.?\d*)\s*\|", contents)
-        results = [float(result) for result in results]
-    assert len(results) > 0    
-    print(len(input_sizes), len(results), results)
+        value_pattern = (
+            r"\|\s*Operational intensity \[FLOP/Byte\]\s*\|\s*(\d+\.?\d*)\s*\|"
+        )
+        result_df = data_frame_from_file(args.input, label_pattern, value_pattern)
 
-    assert len(results) % len(input_sizes) == 0
     # if the sizes don't match, find the failed runs and add this to the output file:
     """
     On average: 0.0 s
+    000000
     | Energy [J] | 0.0 |
     | SP [MFLOP/s] | 0.0 |
     | Operational intensity [FLOP/Byte] | 0.0 |
     """
-
-    num_variants = len(results) // len(input_sizes)
-    columns = [
-               "input_size","deeprleddy-intel-open-fortran","deeprleddy-intel-open-dnnl",
-               "deeprleddy-intel-open-libtorch","deeprleddy-intel-open-pytorch",
-               "subgridles-intel-open-cpp","subgridles-intel-open-fortran",
-               "subgridles-intel-open-pytorch",
-               "deeprleddy-intel-mkl-fortran","deeprleddy-intel-mkl-dnnl",
-               "deeprleddy-intel-mkl-libtorch","deeprleddy-intel-mkl-pytorch",
-               "subgridles-intel-mkl-cpp","subgridles-intel-mkl-fortran",
-               "subgridles-intel-mkl-pytorch",
-              ]
-    data = []
-    for i in range(len(input_sizes)):
-        data.append(
-            [input_sizes[i]] + results[i * num_variants : (i + 1) * num_variants]
-        )
-    df = pd.DataFrame(data, columns=columns)
-    print(df)
-    df.to_csv(args.input[:-4] + ".csv", index=None)
+    result_df.columns = columns[1:]
+    result_df.index.name = columns[0]
+    print(result_df)
+    result_df.to_csv(args.input[:-4] + ".csv")
 
     try:
         import subprocess
