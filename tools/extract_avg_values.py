@@ -4,7 +4,7 @@ import argparse as arg
 import re
 
 
-def data_frame_from_file(file_name, label_pattern, value_pattern):
+def data_frame_from_file(file_name, label_pattern, value_pattern, floatify=True):
     data = {}
     current_label = None
     with open(file_name, "r") as f:
@@ -19,7 +19,9 @@ def data_frame_from_file(file_name, label_pattern, value_pattern):
                 values = re.findall(value_pattern, line)
                 for value in values:
                     if current_label is not None:
-                        data[current_label].append(float(value))
+                        if floatify:
+                            value = float(value)
+                        data[current_label].append(value)
                     else:
                         print(value)
 
@@ -78,8 +80,10 @@ if __name__ == "__main__":
     elif args.type == "memory":
         # the results are listed on a single line,
         # and input lengths are listed on some line above
-        value_pattern = r"\n(\d+)"
-        result_df = data_frame_from_file(args.input, label_pattern, value_pattern)
+        value_pattern = r"(\d+)$"
+        result_df = data_frame_from_file(
+            args.input, label_pattern, value_pattern, floatify=False
+        )
     elif args.type == "energy":
         value_pattern = r"\|\s*Energy \[J\]\s*\|\s*(\d+\.?\d*)\s*\|"
         result_df = data_frame_from_file(args.input, label_pattern, value_pattern)
