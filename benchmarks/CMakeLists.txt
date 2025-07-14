@@ -1,3 +1,4 @@
 add_subdirectory(mnist)
 add_subdirectory(DeepRLEddy)
+add_subdirectory(NeuralClosure)
 add_subdirectory(SubgridLES)

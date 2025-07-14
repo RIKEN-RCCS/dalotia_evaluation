@@ -1,0 +1,27 @@
+add_executable( neuralClosure_cpp neuralClosure.cpp )
+target_link_libraries( neuralClosure_cpp PUBLIC dalotia::dalotia_cpp )
+target_link_libraries( neuralClosure_cpp PRIVATE cacheflush )
+
+if (DALOTIA_E_FOR_MEMORY_TRACE)
+    target_compile_definitions(neuralClosure_cpp PRIVATE DALOTIA_E_FOR_MEMORY_TRACE)
+endif()
+if (DALOTIA_E_WITH_LIKWID_MARKERS)
+  target_compile_definitions(neuralClosure_cpp PRIVATE LIKWID_PERFMON)
+  target_include_directories(neuralClosure_cpp PRIVATE ${LIKWID_INCLUDE_DIR})
+  target_link_libraries(neuralClosure_cpp PRIVATE likwid::likwid)
+  add_dependencies(neuralClosure_cpp likwid::likwid)
+endif(DALOTIA_E_WITH_LIKWID_MARKERS)
+
+if (DALOTIA_E_WITH_CPPFLOW)
+  add_dependencies( neuralClosure_cpp cppflow )
+  target_include_directories( neuralClosure_cpp PUBLIC ${CPPFLOW_INCLUDE_DIR} )
+  target_compile_options( neuralClosure_cpp PUBLIC "-DDALOTIA_E_WITH_CPPFLOW")
+endif (DALOTIA_E_WITH_CPPFLOW)
+target_include_directories( neuralClosure_cpp PUBLIC ${BLAS_INCLUDE_DIRS})
+target_link_libraries(neuralClosure_cpp PRIVATE BLAS::BLAS)
+
+# if (OpenMP_CXX_FOUND)
+#   target_link_libraries(neuralClosure_fortran PUBLIC OpenMP::OpenMP_CXX)
+# endif ()
+
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/Harmonic_Mk11_M1_2D_gamma2/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/Harmonic_Mk11_M1_2D_gamma2/)

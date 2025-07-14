@@ -8,6 +8,7 @@ option(DALOTIA_E_WITH_BOOST_MULTI "include boost::multi for tensor operations" O
 option(DALOTIA_E_WITH_NDIRECT "include ndirect for convolution operations on ARM" OFF)
 option(DALOTIA_E_WITH_LIBTORCH "include libtorch for jitted tensor operations" OFF)
 option(DALOTIA_E_WITH_ONEDNN "include oneDNN for tensor operations" OFF)
+option(DALOTIA_E_WITH_CPPFLOW "include cppflow for tensor operations through Tensorflow C API" OFF)
 option(DALOTIA_E_WITH_FORTRAN "Build Fortran executables" ON)
 if (DALOTIA_E_WITH_FORTRAN)
     enable_language(Fortran)
@@ -24,20 +25,34 @@ if (NOT DEFINED dalotia_DIR OR dalotia_DIR MATCHES "fetch")
   FetchContent_Declare(
     dalotia
     GIT_REPOSITORY https://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@github.com/RIKEN-RCCS/dalotia.git #TODO replace w/ https
-    GIT_TAG v1.0.0
+    GIT_TAG feature_tensorflow_load #v1.0.0
     # CMAKE_ARGS  # I believe these are ignored, set like below
     #       -D DALOTIA_BUILD_TESTS=ON
-    OVERRIDE_FIND_PACKAGE
   )
   set(DALOTIA_BUILD_TESTS OFF)
+  set(DALOTIA_WITH_TENSORFLOW ON)
   FetchContent_MakeAvailable(dalotia)
   FetchContent_GetProperties(dalotia SOURCE_DIR DALOTIA_CPP_INCLUDE_DIR BINARY_DIR DALOTIA_CPP_LIBRARY)
   message(STATUS "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
   message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
 else()
-  find_package(safetensors-cpp REQUIRED)
-endif()  
-find_package(dalotia REQUIRED)
+  find_package(dalotia REQUIRED)
+endif()
+
+if(DALOTIA_E_WITH_CPPFLOW)
+  set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} "_deps/tensorflow-src/lib/" "${CMAKE_CURRENT_BINARY_DIR}/_deps/tensorflow-src/include/")
+  set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_BINARY_DIR}/_deps/dalotia-src/cmake/modules/")
+  set(tensorflow_INCLUDE_DIRS $<BUILD_INTERFACE:${tensorflow_INCLUDE_DIRS}> $<INSTALL_INTERFACE:include>)
+  FetchContent_Declare(
+    cppflow
+    GIT_REPOSITORY https://github.com/serizba/cppflow.git
+    GIT_TAG 99e04d7 # last update 3 years ago...
+  )
+  find_package(tensorflow REQUIRED)
+  FetchContent_MakeAvailable(cppflow)
+  set(CPPFLOW_INCLUDE_DIR ${cppflow_SOURCE_DIR}/include)
+  message(STATUS "CPPFLOW_INCLUDE_DIR: ${CPPFLOW_INCLUDE_DIR}")
+endif(DALOTIA_E_WITH_CPPFLOW)
 
 if(DALOTIA_E_WITH_LIBTORCH)
   # the default pip-downloaded libtorch is built with CXX11_ABI=0 -> to use it everything else needs that too
