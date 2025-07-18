@@ -37,11 +37,15 @@ file(DOWNLOAD
   ${KITRT_TF_MODEL_PATH}/keras_metadata.pb
 )
 file(DOWNLOAD
-  https://github.com/KiT-RT/kitrt_code/raw/refs/heads/master/tfmodels/${KITRT_TF_MODEL_NAME}/best_model/variables.index
-  ${KITRT_TF_MODEL_PATH}/variables.index
+  https://github.com/KiT-RT/kitrt_code/raw/refs/heads/master/tfmodels/${KITRT_TF_MODEL_NAME}/best_model/variables/variables.index
+  ${KITRT_TF_MODEL_PATH}/variables/variables.index
 )
 file(DOWNLOAD
-  https://github.com/KiT-RT/kitrt_code/raw/refs/heads/master/tfmodels/${KITRT_TF_MODEL_NAME}/best_model/variables.data-00000-of-00001
-  ${KITRT_TF_MODEL_PATH}/variables.data-00000-of-00001
+  https://github.com/KiT-RT/kitrt_code/raw/refs/heads/master/tfmodels/${KITRT_TF_MODEL_NAME}/best_model/variables/variables.data-00000-of-00001
+  ${KITRT_TF_MODEL_PATH}/variables/variables.data-00000-of-00001
 )
-  
+
+file(COPY 
+     ${CMAKE_CURRENT_SOURCE_DIR}/inputs1367.bin
+     ${CMAKE_CURRENT_SOURCE_DIR}/outputs1367.bin
+     DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
