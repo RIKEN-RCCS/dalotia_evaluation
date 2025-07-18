@@ -65,6 +65,7 @@ run_inference_cppflow(const std::vector<std::vector<float>> &input_tensors,
     assert(servingSize * (nSystem - 1) == inputs.size());
     auto &results = result_tensors[r];
 
+    // the next few lines are heavily inspired by KiT-RT
     // this constructor only supports std::vector (no PMR)
     auto modelInput = cppflow::tensor(inputs, {servingSize, nSystem - 1});
 
@@ -85,6 +86,27 @@ run_inference_cppflow(const std::vector<std::vector<float>> &input_tensors,
 
 #endif // DALOTIA_E_WITH_CPPFLOW
 
+// helper function to get the number of layers
+std::set<int> get_layer_numbers(const dalotia::TensorFile *dalotia_file) {
+  std::set<int> layer_numbers;
+  for (const auto &name : dalotia_file->get_tensor_names()) {
+    if (dalotia_file->get_num_dimensions(name) == 0) {
+      continue; // skip scalars
+    }
+    auto pos = name.find("layer_");
+    if (pos != std::string::npos) {
+      // parse the integer that comes after "layer_" ; next character after is
+      // either d or n
+      auto pos_after = name.find_first_of("dn", pos + 6);
+      assert(pos_after != std::string::npos);
+      int layer_num = std::stoi(name.substr(pos + 6, pos_after - (pos + 6)));
+      layer_numbers.insert(layer_num);
+    }
+  }
+  assert(layer_numbers.size() > 0);
+  return layer_numbers;
+}
+
 std::chrono::duration<double>
 run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
                     const std::vector<int> &input_sizes, size_t num_repetitions,
@@ -95,17 +117,42 @@ run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
   std::string tfModelPath = "./" + tfModelName + "/";
   auto dalotia_file = std::unique_ptr<dalotia::TensorFile>(
       dalotia::make_tensor_file(tfModelPath));
-  for (const auto &name : dalotia_file->get_tensor_names()) {
-    if (dalotia_file->get_num_dimensions(name) == 0) {
-      continue; // skip scalars
+
+  const int num_inputs = input_sizes[0];
+  const int num_input_features = input_sizes[1];
+  const int num_output_features = output_sizes[1];
+  const std::set<int> layer_numbers = get_layer_numbers(dalotia_file.get());
+  const int num_layers = layer_numbers.size();
+  std::vector<std::vector<float>> weights(num_layers);
+  std::vector<std::vector<int>> weights_extents(num_layers);
+  std::vector<std::vector<float>> biases(num_layers);
+  std::vector<std::vector<int>> biases_extents(num_layers);
+  for (const auto &layer : layer_numbers) {
+    // load weights and biases for all layers
+    // TODO what do the variants with /m/ or /v/ mean?
+    std::string weight_name;
+    std::string bias_name;
+    if (layer < 0) {
+      continue;
+      weight_name = "layer_" + std::to_string(layer) +
+                    "_input/kernel/Read/ReadVariableOp";
+      bias_name =
+          "layer_" + std::to_string(layer) + "_input/bias/Read/ReadVariableOp";
+    } else {
+      weight_name = "layer_" + std::to_string(layer) +
+                    "dense_component/kernel/Read/ReadVariableOp";
+      bias_name = "layer_" + std::to_string(layer) +
+                  "nn_component/bias/Read/ReadVariableOp";
     }
-    std::vector<int> extents = dalotia_file->get_tensor_extents(name);
-    std::cout << "Tensor name: " << name << ", extents: ";
-    for (const auto &extent : extents) {
-      std::cout << extent << " ";
-    }
-    std::cout << std::endl;
+    std::cout << "Loading weights and biases for layer " << layer << ": "
+              << weight_name << ", " << bias_name << std::endl;
+    biases_extents[layer] = dalotia_file->get_tensor_extents(bias_name);
+    std::cout << "Layer " << layer << ": "
+              << "biases extents: " << biases_extents[layer][0] << std::endl;
   }
+  assert(weights_extents[0][0] == num_input_features);
+  assert(weights_extents[num_layers - 1][1] == num_output_features);
+  assert(weights_extents[0][1] == weights_extents[1][0]);
 
   LIKWID_MARKER_START("cppflow");
   const auto start = std::chrono::high_resolution_clock::now();
