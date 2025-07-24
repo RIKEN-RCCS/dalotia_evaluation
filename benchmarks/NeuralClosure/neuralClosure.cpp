@@ -1,7 +1,10 @@
 #include <cassert>
 #include <chrono>
+#include <cmath>   // std::abs, std::exp
 #include <cstring> // std::memcpy
+#include <fstream>
 #include <iostream>
+#include <set>
 #include <vector>
 
 #include "cacheflush.h"
@@ -107,12 +110,27 @@ std::set<int> get_layer_numbers(const dalotia::TensorFile *dalotia_file) {
   return layer_numbers;
 }
 
+// vector-valued in-place elu activation function
+void elu(std::vector<float> &vec) {
+  for (size_t i = 0; i < vec.size(); ++i) {
+    vec[i] = std::max(0.f, vec[i]) + std::min(0.f, std::exp(vec[i]) - 1);
+  }
+}
+
+// vector-valued in-place relu activation function
+void relu(std::vector<float> &vec) {
+  for (size_t i = 0; i < vec.size(); ++i) {
+    vec[i] = std::max(0.f, vec[i]);
+  }
+}
+
 std::chrono::duration<double>
 run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
                     const std::vector<int> &input_sizes, size_t num_repetitions,
                     const std::vector<int> &output_sizes,
                     std::vector<std::vector<float>> &result_tensors) {
-  const int num_inputs = input_sizes[0];
+  assert(num_repetitions == input_tensors.size());
+  const int num_inputs = input_sizes[0]; // == batch size
   const int num_input_features = input_sizes[1];
   const int num_output_features = output_sizes[1];
 
@@ -126,8 +144,7 @@ run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
   std::vector<float> meanshift_weights;
   {
     auto [meanshift_extents, intermediate_pmr_vector] =
-        dalotia_file->load_tensor_dense<float>(
-            "Variable/Read/ReadVariableOp");
+        dalotia_file->load_tensor_dense<float>("Variable/Read/ReadVariableOp");
     assert(meanshift_extents.size() == 1);
     assert(meanshift_extents[0] == num_input_features);
     meanshift_weights.assign(
@@ -146,7 +163,8 @@ run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
     decorrelation_weights.assign(
         std::make_move_iterator(intermediate_pmr_vector.begin()),
         std::make_move_iterator(intermediate_pmr_vector.end()));
-    assert(decorrelation_weights.size() == num_input_features * num_input_features);
+    assert(decorrelation_weights.size() ==
+           num_input_features * num_input_features);
   }
   std::vector<std::vector<float>> dense(num_layers);
   std::vector<std::vector<int>> dense_extents(num_layers);
@@ -209,15 +227,100 @@ run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
   assert(dense_extents[num_layers - 1][0] == num_output_features);
   assert(nn_weights_extents[0][1] == nn_weights_extents[1][0]);
   assert(nn_biases_extents[0][0] == nn_weights_extents[0][1]);
+  int num_hidden_features = nn_weights_extents[0][1];
+  assert(num_hidden_features == 100);
   dalotia_file.reset(); // free tensorflow memory
 
+  // create intermediate tensors
+  std::vector<float> tensor_in(num_inputs * num_input_features, 0.);
+  std::vector<float> decorrelated_tensor = tensor_in;
+  std::vector<float> hidden_tensor_in(num_inputs * num_input_features, 0.);
+  std::vector<float> hidden_tensor_out = hidden_tensor_in;
   LIKWID_MARKER_START("cppflow");
   const auto start = std::chrono::high_resolution_clock::now();
   for (size_t r = 0; r < num_repetitions; ++r) {
     auto &inputs = input_tensors[r];
     auto &results = result_tensors[r];
-    // ...
+    //! figure out correctness
+    // TODO: swap the sgemvs for gemms, to avoid unpacking the batch
+    // apply mean shift / mean normalization
+    for (int i = 0; i < num_inputs; ++i) {
+      int input_offset = i * num_input_features;
+      for (int j = 0; j < num_input_features; ++j) {
+        tensor_in[input_offset + j] =
+            inputs[input_offset + j] - meanshift_weights[j];
+      }
+    }
+
+    // apply decorrelation
+    for (int i = 0; i < num_inputs; ++i) {
+      int input_offset = i * num_input_features;
+      // call cblas_sgemv to apply the decorrelation matrix
+      cblas_sgemv(CblasRowMajor, CblasNoTrans, num_input_features,
+                  num_input_features, 1.0f, decorrelation_weights.data(),
+                  num_input_features, &tensor_in[input_offset], 1, 0.0f,
+                  &decorrelated_tensor[input_offset], 1);
+    }
+
+    // apply input dense layer: nn_weights[0] and nn_biases[0]
+    for (int i = 0; i < num_inputs; ++i) {
+      int input_offset = i * num_input_features;
+      int dense_offset = i * nn_weights_extents[0][1];
+      cblas_sgemv(CblasRowMajor, CblasNoTrans, nn_weights_extents[0][0],
+                  nn_weights_extents[0][1], 1.0f, nn_weights[0].data(),
+                  nn_weights_extents[0][1], &decorrelated_tensor[input_offset],
+                  1, 0.0f, &hidden_tensor_out[dense_offset], 1);
+      // add bias
+      for (int j = 0; j < nn_biases_extents[0][0]; ++j) {
+        hidden_tensor_out[dense_offset + j] += nn_biases[0][j];
+      }
+    }
+    // apply ELU activation function
+    elu(hidden_tensor_out);
+    std::swap(hidden_tensor_in, hidden_tensor_out);
+
+    // apply the remaining layers
+    for (int layer = 1; layer < num_layers - 1; ++layer) {
+      // apply dense layer
+      for (int i = 0; i < num_inputs; ++i) {
+        int input_offset = i * nn_weights_extents[layer][0];
+        int dense_offset = i * nn_weights_extents[layer][1];
+        cblas_sgemv(CblasRowMajor, CblasNoTrans, nn_weights_extents[layer][0],
+                    nn_weights_extents[layer][1], 1.0f,
+                    nn_weights[layer].data(), nn_weights_extents[layer][1],
+                    &hidden_tensor_in[input_offset], 1, 0.0f,
+                    &hidden_tensor_out[dense_offset], 1);
+        // add bias
+        for (int j = 0; j < nn_biases_extents[layer][0]; ++j) {
+          hidden_tensor_out[dense_offset + j] += nn_biases[layer][j];
+        }
+      }
+      // apply ELU activation function
+      elu(hidden_tensor_out);
+      std::swap(hidden_tensor_in, hidden_tensor_out);
+    }
+    // apply the last layer, which is a convex output layer
+    for (int i = 0; i < num_inputs; ++i) {
+      int input_offset = i * nn_weights_extents[num_layers - 1][0];
+      int dense_offset = i * nn_weights_extents[num_layers - 1][1];
+      cblas_sgemv(CblasRowMajor, CblasNoTrans,
+                  nn_weights_extents[num_layers - 1][0],
+                  nn_weights_extents[num_layers - 1][1], 1.0f,
+                  nn_weights[num_layers - 1].data(),
+                  nn_weights_extents[num_layers - 1][1],
+                  &hidden_tensor_in[input_offset], 1, 0.0f,
+                  &hidden_tensor_out[dense_offset], 1);
+      // add bias
+      for (int j = 0; j < nn_biases_extents[num_layers - 1][0]; ++j) {
+        hidden_tensor_out[dense_offset + j] += nn_biases[num_layers - 1][j];
+      }
+    }
+    // apply relu activation function
+    relu(hidden_tensor_out);
+    // swap the output to the results
+    std::swap(results, hidden_tensor_out);
   }
+
   LIKWID_MARKER_STOP("cblas");
   return std::chrono::high_resolution_clock::now() - start;
 }
