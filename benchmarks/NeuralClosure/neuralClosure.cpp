@@ -112,47 +112,78 @@ run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
                     const std::vector<int> &input_sizes, size_t num_repetitions,
                     const std::vector<int> &output_sizes,
                     std::vector<std::vector<float>> &result_tensors) {
+  const int num_inputs = input_sizes[0];
+  const int num_input_features = input_sizes[1];
+  const int num_output_features = output_sizes[1];
+
   // load the model tensors
   std::string tfModelName = "Monomial_Mk11_M3_2D_gamma3";
   std::string tfModelPath = "./" + tfModelName + "/";
   auto dalotia_file = std::unique_ptr<dalotia::TensorFile>(
       dalotia::make_tensor_file(tfModelPath));
-
-  const int num_inputs = input_sizes[0];
-  const int num_input_features = input_sizes[1];
-  const int num_output_features = output_sizes[1];
   const std::set<int> layer_numbers = get_layer_numbers(dalotia_file.get());
-  const int num_layers = layer_numbers.size();
-  std::vector<std::vector<float>> weights(num_layers);
-  std::vector<std::vector<int>> weights_extents(num_layers);
-  std::vector<std::vector<float>> biases(num_layers);
-  std::vector<std::vector<int>> biases_extents(num_layers);
+  int num_layers = layer_numbers.size();
+  std::vector<std::vector<float>> dense(num_layers);
+  std::vector<std::vector<int>> dense_extents(num_layers);
+  std::vector<std::vector<float>> nn_weights(num_layers);
+  std::vector<std::vector<int>> nn_weights_extents(num_layers);
+  std::vector<std::vector<float>> nn_biases(num_layers);
+  std::vector<std::vector<int>> nn_biases_extents(num_layers);
+  int layer_index = -1;
   for (const auto &layer : layer_numbers) {
+    ++layer_index;
     // load weights and biases for all layers
     // TODO what do the variants with /m/ or /v/ mean?
-    std::string weight_name;
-    std::string bias_name;
+    // https://github.com/ScSteffen/neuralEntropyClosures/blob/076fc1d9cb69d52c8b59f3327cda38703b7c4c56/src/networks/mk11.py#L173
+    // -> -1 is input layer with elu activation
+    // 5 is convex_output_layer
+    // https://stackoverflow.com/a/37870634/7272382
+    // https://github.com/ScSteffen/neuralEntropyClosures/blob/076fc1d9cb69d52c8b59f3327cda38703b7c4c56/src/networks/mk11.py#L111
+    std::string dense_name, weight_name, bias_name;
     if (layer < 0) {
-      continue;
+      // input layer, -1
+      // https://github.com/ScSteffen/neuralEntropyClosures/blob/076fc1d9cb69d52c8b59f3327cda38703b7c4c56/src/networks/mk11.py#L148
+      // should be just a dense layer...
       weight_name = "layer_" + std::to_string(layer) +
                     "_input/kernel/Read/ReadVariableOp";
       bias_name =
           "layer_" + std::to_string(layer) + "_input/bias/Read/ReadVariableOp";
     } else {
+      dense_name = "layer_" + std::to_string(layer) +
+                   "dense_component/kernel/Read/ReadVariableOp";
       weight_name = "layer_" + std::to_string(layer) +
-                    "dense_component/kernel/Read/ReadVariableOp";
+                    "nn_component/kernel/Read/ReadVariableOp";
       bias_name = "layer_" + std::to_string(layer) +
                   "nn_component/bias/Read/ReadVariableOp";
     }
-    std::cout << "Loading weights and biases for layer " << layer << ": "
-              << weight_name << ", " << bias_name << std::endl;
-    biases_extents[layer] = dalotia_file->get_tensor_extents(bias_name);
-    std::cout << "Layer " << layer << ": "
-              << "biases extents: " << biases_extents[layer][0] << std::endl;
+    dalotia::vector<float> intermediate_pmr_vector;
+    if (!dense_name.empty()) {
+      std::tie(dense_extents[layer_index], intermediate_pmr_vector) =
+          dalotia_file->load_tensor_dense<float>(dense_name);
+      dense[layer_index].assign(
+          std::make_move_iterator(intermediate_pmr_vector.begin()),
+          std::make_move_iterator(intermediate_pmr_vector.end()));
+      assert(dense_extents[layer_index].size() == 2);
+    }
+    std::tie(nn_weights_extents[layer_index], intermediate_pmr_vector) =
+        dalotia_file->load_tensor_dense<float>(weight_name);
+    nn_weights[layer_index].assign(
+        std::make_move_iterator(intermediate_pmr_vector.begin()),
+        std::make_move_iterator(intermediate_pmr_vector.end()));
+    std::tie(nn_biases_extents[layer_index], intermediate_pmr_vector) =
+        dalotia_file->load_tensor_dense<float>(bias_name);
+    assert(nn_biases_extents[layer_index].size() == 1);
+    nn_biases[layer_index].assign(
+        std::make_move_iterator(intermediate_pmr_vector.begin()),
+        std::make_move_iterator(intermediate_pmr_vector.end()));
+    assert(nn_weights_extents[layer_index].size() == 2);
+    assert(nn_biases_extents[layer_index][0] ==
+           nn_weights_extents[layer_index][1]);
   }
-  assert(weights_extents[0][0] == num_input_features);
-  assert(weights_extents[num_layers - 1][1] == num_output_features);
-  assert(weights_extents[0][1] == weights_extents[1][0]);
+  assert(nn_weights_extents[0][0] == num_input_features);
+  assert(dense_extents[num_layers - 1][0] == num_output_features);
+  assert(nn_weights_extents[0][1] == nn_weights_extents[1][0]);
+  assert(nn_biases_extents[0][0] == nn_weights_extents[0][1]);
 
   LIKWID_MARKER_START("cppflow");
   const auto start = std::chrono::high_resolution_clock::now();
