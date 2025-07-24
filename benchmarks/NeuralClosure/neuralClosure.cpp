@@ -123,6 +123,31 @@ run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
       dalotia::make_tensor_file(tfModelPath));
   const std::set<int> layer_numbers = get_layer_numbers(dalotia_file.get());
   int num_layers = layer_numbers.size();
+  std::vector<float> meanshift_weights;
+  {
+    auto [meanshift_extents, intermediate_pmr_vector] =
+        dalotia_file->load_tensor_dense<float>(
+            "Variable/Read/ReadVariableOp");
+    assert(meanshift_extents.size() == 1);
+    assert(meanshift_extents[0] == num_input_features);
+    meanshift_weights.assign(
+        std::make_move_iterator(intermediate_pmr_vector.begin()),
+        std::make_move_iterator(intermediate_pmr_vector.end()));
+    assert(meanshift_weights.size() == num_input_features);
+  }
+  std::vector<float> decorrelation_weights;
+  {
+    auto [decorrelation_extents, intermediate_pmr_vector] =
+        dalotia_file->load_tensor_dense<float>(
+            "Variable_1/Read/ReadVariableOp");
+    assert(decorrelation_extents.size() == 2);
+    assert(decorrelation_extents[0] == num_input_features);
+    assert(decorrelation_extents[1] == num_input_features);
+    decorrelation_weights.assign(
+        std::make_move_iterator(intermediate_pmr_vector.begin()),
+        std::make_move_iterator(intermediate_pmr_vector.end()));
+    assert(decorrelation_weights.size() == num_input_features * num_input_features);
+  }
   std::vector<std::vector<float>> dense(num_layers);
   std::vector<std::vector<int>> dense_extents(num_layers);
   std::vector<std::vector<float>> nn_weights(num_layers);
@@ -184,6 +209,7 @@ run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
   assert(dense_extents[num_layers - 1][0] == num_output_features);
   assert(nn_weights_extents[0][1] == nn_weights_extents[1][0]);
   assert(nn_biases_extents[0][0] == nn_weights_extents[0][1]);
+  dalotia_file.reset(); // free tensorflow memory
 
   LIKWID_MARKER_START("cppflow");
   const auto start = std::chrono::high_resolution_clock::now();
