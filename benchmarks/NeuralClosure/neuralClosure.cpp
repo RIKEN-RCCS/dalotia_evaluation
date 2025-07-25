@@ -51,7 +51,7 @@ run_inference_cppflow(const std::vector<std::vector<float>> &input_tensors,
                       size_t num_repetitions,
                       const std::vector<int> &output_sizes,
                       std::vector<std::vector<float>> &result_tensors) {
-  std::string tfModelName = "Monomial_Mk11_M3_2D_gamma3";
+  std::string tfModelName = "Monomial_Mk11_M3_2D_gamma3/best_model/";
   std::string tfModelPath = "./" + tfModelName + "/";
 
   std::unique_ptr<cppflow::model> tfModel =
@@ -135,7 +135,7 @@ run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
   const int num_output_features = output_sizes[1];
 
   // load the model tensors
-  std::string tfModelName = "Monomial_Mk11_M3_2D_gamma3";
+  std::string tfModelName = "Monomial_Mk11_M3_2D_gamma3/best_model/";
   std::string tfModelPath = "./" + tfModelName + "/";
   auto dalotia_file = std::unique_ptr<dalotia::TensorFile>(
       dalotia::make_tensor_file(tfModelPath));
