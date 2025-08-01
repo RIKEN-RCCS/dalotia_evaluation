@@ -71,13 +71,22 @@ run_inference_cppflow(const std::vector<std::vector<float>> &input_tensors,
     // the next few lines are heavily inspired by KiT-RT
     // this constructor only supports std::vector (no PMR)
     auto modelInput = cppflow::tensor(inputs, {servingSize, nSystem - 1});
-
-    // cf.
-    // https://github.com/KiT-RT/kitrt_code/blob/bcf4d1b6ad2af3a7d88943cef5cdf90fea752401/src/optimizers/neuralnetworkoptimizer.cpp#L381
-    std::vector<cppflow::tensor> TFresults = tfModel->operator()(
-        {{"serving_default_input_1:0", modelInput}},
-        {"StatefulPartitionedCall:0", "StatefulPartitionedCall:1",
-         "StatefulPartitionedCall:2"});
+    std::vector<cppflow::tensor> TFresults;
+    try{
+      // cf.
+      // https://github.com/KiT-RT/kitrt_code/blob/bcf4d1b6ad2af3a7d88943cef5cdf90fea752401/src/optimizers/neuralnetworkoptimizer.cpp#L381
+      // this is for tensorflow 2.2.0 legacy models, new: serving_default_args_0
+      TFresults = tfModel->operator()(
+          {{"serving_default_input_1:0", modelInput}},
+          {"StatefulPartitionedCall:0", "StatefulPartitionedCall:1",
+          "StatefulPartitionedCall:2"});
+    } catch (const std::runtime_error &e) {
+      // try with new model signature
+      TFresults = tfModel->operator()(
+          {{"serving_default_args_0:0", modelInput}},
+          {"StatefulPartitionedCall:0", "StatefulPartitionedCall:1",
+          "StatefulPartitionedCall:2"});
+    }
 
     // move to output
     assert(TFresults[1].get_data<float>().size() == results.size());
@@ -143,6 +152,7 @@ run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
   int num_layers = layer_numbers.size();
   std::vector<float> meanshift_weights;
   {
+    // the names Variable and Variable_1 can be switched in the newer models
     auto [meanshift_extents, intermediate_pmr_vector] =
         dalotia_file->load_tensor_dense<float>("Variable/Read/ReadVariableOp");
     assert(meanshift_extents.size() == 1);
@@ -236,7 +246,7 @@ run_inference_cblas(const std::vector<std::vector<float>> &input_tensors,
   std::vector<float> decorrelated_tensor = tensor_in;
   std::vector<float> hidden_tensor_in(num_inputs * num_input_features, 0.);
   std::vector<float> hidden_tensor_out = hidden_tensor_in;
-  LIKWID_MARKER_START("cppflow");
+  LIKWID_MARKER_START("cblas");
   const auto start = std::chrono::high_resolution_clock::now();
   for (size_t r = 0; r < num_repetitions; ++r) {
     auto &inputs = input_tensors[r];
