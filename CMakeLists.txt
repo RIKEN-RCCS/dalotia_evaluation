@@ -48,6 +48,7 @@ if(DALOTIA_E_WITH_CPPFLOW)
     GIT_REPOSITORY https://github.com/serizba/cppflow.git
     GIT_TAG 99e04d7 # last update 3 years ago...
   )
+  set(BUILD_EXAMPLES OFF)
   find_package(tensorflow REQUIRED)
   FetchContent_MakeAvailable(cppflow)
   set(CPPFLOW_INCLUDE_DIR ${cppflow_SOURCE_DIR}/include)
