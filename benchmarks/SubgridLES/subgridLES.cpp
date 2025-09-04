@@ -80,60 +80,84 @@ std::chrono::duration<double> run_inference_cblas(
     std::string filename = "./weights_SubgridLESNet.safetensors";
     auto dalotia_file = std::unique_ptr<dalotia::TensorFile>(dalotia::make_tensor_file(filename));
     
-    auto [weights_extents_1, weights_1] = dalotia_file->load_tensor_dense<float>("fc1.weight");
-    auto [biases_extents_1, biases_1] = dalotia_file->load_tensor_dense<float>("fc1.bias");
-    auto [weights_extents_2, weights_2] = dalotia_file->load_tensor_dense<float>("fc2.weight");
-    auto [biases_extents_2, biases_2] = dalotia_file->load_tensor_dense<float>("fc2.bias");
-    int num_output_features = output_sizes[1];
-    int num_input_features = input_sizes[1];
-    int num_inputs = input_sizes[0];
-    int num_hidden_neurons = weights_extents_1[0];
-    assert(num_input_features == 10);
-    assert(num_hidden_neurons == 300);
-    assert(num_output_features == 6);
-    assert(weights_extents_1 == std::vector<int>({num_hidden_neurons, num_input_features}));
-    assert(biases_extents_1 == std::vector<int>({num_hidden_neurons})); 
-    assert(weights_extents_2 == std::vector<int>({num_output_features, num_hidden_neurons}));
-    assert(biases_extents_2 == std::vector<int>({num_output_features})); 
-    assert(output_sizes == std::vector<int>({num_inputs, num_output_features}));
+    std::chrono::duration<double> total_duration(0);
+    int num_threads = 0;
+    #pragma omp parallel reduction(+:num_threads)
+    num_threads += 1;
+    #pragma omp parallel default(none) \
+        shared(input_tensors, input_sizes, num_repetitions, output_sizes, result_tensors, \
+               dalotia_file, total_duration, num_threads, std::cout)
+    {
+        //TODO test dalotia w/ annd w/o custom allocator
+        const auto [weights_extents_1, weights_1] = dalotia_file->load_tensor_dense<float>("fc1.weight");
+        const auto [biases_extents_1, biases_1] = dalotia_file->load_tensor_dense<float>("fc1.bias");
+        const auto [weights_extents_2, weights_2] = dalotia_file->load_tensor_dense<float>("fc2.weight");
+        const auto [biases_extents_2, biases_2] = dalotia_file->load_tensor_dense<float>("fc2.bias");
+        const int num_output_features = output_sizes[1];
+        const int num_input_features = input_sizes[1];
+        const int num_inputs = input_sizes[0];
+        const int num_hidden_neurons = weights_extents_1[0];
+        assert(num_input_features == 10);
+        assert(num_hidden_neurons == 300);
+        assert(num_output_features == 6);
+        assert(weights_extents_1 == std::vector<int>({num_hidden_neurons, num_input_features}));
+        assert(biases_extents_1 == std::vector<int>({num_hidden_neurons})); 
+        assert(weights_extents_2 == std::vector<int>({num_output_features, num_hidden_neurons}));
+        assert(biases_extents_2 == std::vector<int>({num_output_features})); 
+        assert(output_sizes == std::vector<int>({num_inputs, num_output_features}));
 
-    dalotia::vector<float> hidden_values(num_hidden_neurons*num_inputs);
+        int batch_size = (num_inputs + num_threads - 1) / num_threads;
+        std::cout << "Using " << num_threads << " threads with batch size " << batch_size << std::endl;
+        dalotia::vector<float> hidden_values(batch_size * num_hidden_neurons, 0.);
+        std::cout << "Allocated hidden layer of size " << hidden_values.size() << std::endl;
 
-    LIKWID_MARKER_START("cblas");
-    const auto start = std::chrono::high_resolution_clock::now();
-    for (size_t r = 0; r < num_repetitions; ++r) {
-        auto& inputs = input_tensors[r];
-        auto& results = result_tensors[r];
+        auto thread_num = omp_get_thread_num();
+        #pragma omp barrier
+        LIKWID_MARKER_START("cblas");
+        const auto start = std::chrono::high_resolution_clock::now();
+        for (size_t r = 0; r < num_repetitions; ++r) {
+            auto& inputs = input_tensors[r];
+            auto& results = result_tensors[r];
 
-        // fill hidden vector with bias
-        for (size_t i = 0; i < num_inputs; ++i) {
-            for (size_t j = 0; j < num_hidden_neurons; ++j) {
-                hidden_values[i * num_hidden_neurons + j] = biases_1[j];
+            const size_t my_inputs_start_index = thread_num * batch_size * num_input_features;
+            int my_num_inputs = std::min(batch_size, num_inputs - thread_num * batch_size);
+            if (my_num_inputs <= 0) throw std::runtime_error("Too many threads for the given input size");
+            const size_t my_results_start_index = thread_num * batch_size * num_output_features;
+
+            // fill hidden vector with bias
+            for (size_t i = 0; i < my_num_inputs; ++i) {
+                for (size_t j = 0; j < num_hidden_neurons; ++j) {
+                    hidden_values[i * num_hidden_neurons + j] = biases_1[j];
+                }
             }
-        }
-        // todo compare to cblasRowMajor 
-        cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, num_hidden_neurons, 
-                    num_inputs, num_input_features, 1.0, weights_1.data(), 
-                    num_input_features, inputs.data(), num_input_features, 1.0, 
-                    hidden_values.data(), num_hidden_neurons);
-        // ReLU
-        for (auto& value : hidden_values) {
-            value = value < 0. ? 0. : value;
-        }
-
-        // fill results vector with bias
-        for (size_t i = 0; i < output_sizes[0]; ++i) {
-            for (size_t j = 0; j < output_sizes[1]; ++j) {
-                results[i * output_sizes[1] + j] = biases_2[j];
+            // todo compare to cblasRowMajor
+            cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, num_hidden_neurons,
+                        my_num_inputs, num_input_features, 1.0, weights_1.data(),
+                        num_input_features, &inputs[my_inputs_start_index], num_input_features, 1.0,
+                        hidden_values.data(), num_hidden_neurons);
+            // ReLU
+            for (auto& value : hidden_values) {
+                value = value < 0. ? 0. : value;
             }
+
+            // fill results vector with bias
+            for (size_t i = 0; i < my_num_inputs; ++i) {
+                for (size_t j = 0; j < output_sizes[1]; ++j) {
+                    results[my_results_start_index + i * output_sizes[1] + j] = biases_2[j];
+                }
+            }
+            cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, num_output_features,
+                        my_num_inputs, num_hidden_neurons, 1.0, weights_2.data(),
+                        num_hidden_neurons, hidden_values.data(), num_hidden_neurons, 1.0,
+                        &results[my_results_start_index], num_output_features);
         }
-        cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, num_output_features, 
-                    num_inputs, num_hidden_neurons, 1.0, weights_2.data(), 
-                    num_hidden_neurons, hidden_values.data(), num_hidden_neurons, 1.0, 
-                    results.data(), num_output_features);
+        LIKWID_MARKER_STOP("cblas");
+        auto my_duration = std::chrono::high_resolution_clock::now() - start;
+        #pragma omp reduction(+:total_duration)
+        total_duration += my_duration;
     }
-    LIKWID_MARKER_STOP("cblas");
-    return std::chrono::high_resolution_clock::now() - start;
+    #pragma omp barrier
+    return total_duration;
 }
 #endif // DALOTIA_E_WITH_LIBTORCH
 
