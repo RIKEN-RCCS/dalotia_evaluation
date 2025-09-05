@@ -21,6 +21,10 @@ else (DALOTIA_E_WITH_LIBTORCH)
   target_link_libraries(subgridLES_cpp PRIVATE BLAS::BLAS)
 endif(DALOTIA_E_WITH_LIBTORCH)
 
+if (OpenMP_CXX_FOUND)
+	 target_link_libraries(subgridLES_cpp PUBLIC OpenMP::OpenMP_CXX)
+endif (OpenMP_CXX_FOUND)
+
 if (DALOTIA_E_WITH_FORTRAN)
     add_executable( subgridLES_fortran subgridLES.f90 )
     set_source_files_properties(
@@ -43,9 +47,9 @@ if (DALOTIA_E_WITH_FORTRAN)
     endif(DALOTIA_E_WITH_LIKWID_MARKERS)
 endif (DALOTIA_E_WITH_FORTRAN)
 
-# if (OpenMP_CXX_FOUND)
-#   target_link_libraries(subgridLES_fortran PUBLIC OpenMP::OpenMP_CXX)
-# endif ()
+if (OpenMP_CXX_FOUND)
+  target_link_libraries(subgridLES_fortran PUBLIC OpenMP::OpenMP_Fortran)
+endif ()
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/input_SubgridLESNet.safetensors DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/output_SubgridLESNet.safetensors DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
