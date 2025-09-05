@@ -160,14 +160,13 @@ std::chrono::duration<double> run_inference_cblas(
         #pragma omp barrier
         LIKWID_MARKER_START("cblas");
         const auto start = std::chrono::high_resolution_clock::now();
-        for (size_t r = 0; r < num_repetitions; ++r) {
-            auto& inputs = input_tensors[r];
+        const size_t my_inputs_start_index = thread_num * batch_size * num_input_features;
+        const int my_num_inputs = std::min(batch_size, num_inputs - thread_num * batch_size);
+        if (my_num_inputs <= 0) throw std::runtime_error("Too many threads for the given input size");
+        const size_t my_results_start_index = thread_num * batch_size * num_output_features;
+            for (size_t r = 0; r < num_repetitions; ++r) {
+            const auto& inputs = input_tensors[r];
             auto& results = result_tensors[r];
-
-            const size_t my_inputs_start_index = thread_num * batch_size * num_input_features;
-            int my_num_inputs = std::min(batch_size, num_inputs - thread_num * batch_size);
-            if (my_num_inputs <= 0) throw std::runtime_error("Too many threads for the given input size");
-            const size_t my_results_start_index = thread_num * batch_size * num_output_features;
 
             // fill hidden vector with bias
             for (size_t i = 0; i < my_num_inputs; ++i) {
@@ -195,13 +194,13 @@ std::chrono::duration<double> run_inference_cblas(
                         my_num_inputs, num_hidden_neurons, 1.0, weights_2.data(),
                         num_hidden_neurons, hidden_values.data(), num_hidden_neurons, 1.0,
                         &results[my_results_start_index], num_output_features);
+            #pragma omp barrier
         }
         LIKWID_MARKER_STOP("cblas");
         auto my_duration = std::chrono::high_resolution_clock::now() - start;
         #pragma omp reduction(+:total_duration)
         total_duration += my_duration;
     }
-    #pragma omp barrier
     return total_duration;
 }
 #endif // DALOTIA_E_WITH_LIBTORCH
