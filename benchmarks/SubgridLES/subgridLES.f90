@@ -39,8 +39,8 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 
     ! increment variables
     integer(kind=int64) :: o, f, i, start_time, end_time, count_rate
-    real(kind=real64) :: duration
-    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions
+    real(kind=real64) :: duration, total_duration = 0
+    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_threads, batch_size
     integer :: num_input_features = size(weight_fc1, 1)
     integer :: num_hidden_neurons = size(weight_fc1, 2)
     integer :: num_output_features = size(weight_fc2, 2)
@@ -117,12 +117,21 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     allocate(fc2_output(num_output_features, num_inputs))
     allocate(all_outputs(num_output_features, num_inputs, num_repetitions))
 
+    num_threads = 0
+!$OMP parallel reduction(+:num_threads)
+    num_threads = num_threads + 1
+!$OMP end parallel 
+
     dalotia_file_pointer = dalotia_open_file(trim(filename_model))
+!$OMP parallel default(none) &
+!$OMP& shared(all_inputs, num_inputs, num_input_features, num_hidden_neurons, num_repetitions, num_output_features, all_outputs, dalotia_file_pointer, total_duration, num_threads) &
+!$OMP& private (weight_fc1, bias_fc1, weight_fc2, bias_fc2, o, f, i, start_time, end_time, count_rate, duration, fc1_output, fc2_output)
+!$OMP& reduction(+:total_duration)
+    ! load model weights
     call dalotia_load_tensor(dalotia_file_pointer, "fc1.bias", bias_fc1)
     call dalotia_load_tensor(dalotia_file_pointer, "fc1.weight", weight_fc1)
     call dalotia_load_tensor(dalotia_file_pointer, "fc2.bias", bias_fc2)
     call dalotia_load_tensor(dalotia_file_pointer, "fc2.weight", weight_fc2)
-    call dalotia_close_file(dalotia_file_pointer)
 
     call assert_close_f(weight_fc1(1,1), 0.3333)
     call assert_close_f(weight_fc1(10,1), 0.0833)
@@ -177,9 +186,12 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call system_clock(count_rate=count_rate)
 
     duration = real(end_time-start_time, kind=real64)/real(count_rate, kind=real64)
+
+    total_duration = total_duration + duration
+!$OMP end parallel 
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
-    write(*,*) "Duration: ", duration, "s"
-    write(*,*) "On average: ", duration/real(num_repetitions, kind=real64), "s"
+    write(*,*) "Duration: ", total_duration, "s"
+    write(*,*) "On average: ", total_duration/real(num_repetitions, kind=real64), "s"
 
   ! compare output
     do i = 1, num_repetitions
@@ -191,6 +203,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     end do
     cacheflush_return_value = cf_finalize()
 #endif ! not DALOTIA_E_FOR_MEMORY_TRACE
+  call dalotia_close_file(dalotia_file_pointer)
 contains
 
 !cf. https://stackoverflow.com/a/55376595
