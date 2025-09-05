@@ -84,16 +84,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     filename_input = "./input_DeepRLEddyNet.safetensors"
     filename_output = "./output_DeepRLEddyNet.safetensors"
 
-    dalotia_file_pointer = dalotia_open_file(trim(filename_model))
-    call dalotia_load_tensor(dalotia_file_pointer, "conv1.bias", bias_conv1)
-    call dalotia_load_tensor(dalotia_file_pointer, "conv2.bias", bias_conv2)
-    call dalotia_load_tensor(dalotia_file_pointer, "conv3.bias", bias_conv3)
-    call dalotia_load_tensor(dalotia_file_pointer, "conv4.bias", bias_conv4)
-    call dalotia_load_tensor(dalotia_file_pointer, "conv1.weight", weight_conv1, permutation=[5, 4, 1, 2, 3]) ! load as HWCF
-    call dalotia_load_tensor(dalotia_file_pointer, "conv2.weight", weight_conv2, permutation=[5, 4, 1, 2, 3])
-    call dalotia_load_tensor(dalotia_file_pointer, "conv3.weight", weight_conv3, permutation=[5, 4, 1, 2, 3])
-    call dalotia_load_tensor(dalotia_file_pointer, "conv4.weight", weight_conv4, permutation=[5, 4, 1, 2, 3])
-    call dalotia_close_file(dalotia_file_pointer)
 #ifdef DALOTIA_E_FOR_MEMORY_TRACE
     ! just allocate
     allocate(inputs(6, 6, 6, 3, num_inputs))
@@ -133,7 +123,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call assert(size(all_inputs, 3) == size(inputs,3))
     call assert(size(all_inputs, 4) == size(inputs,4))
     call assert(size(all_inputs, 5) == size(inputs,5))
-    conv1_input = 0.0
     cacheflush_return_value = cf_init()
     cacheflush_return_value = cf_flush(3)
     if (cacheflush_return_value .ne. 0) then
@@ -143,6 +132,16 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call assert(size(inputs, 4) == num_input_features)
     ! allocate output array the same size as the read one
     allocate(all_outputs(num_inputs, num_repetitions))
+
+    dalotia_file_pointer = dalotia_open_file(trim(filename_model))
+    call dalotia_load_tensor(dalotia_file_pointer, "conv1.bias", bias_conv1)
+    call dalotia_load_tensor(dalotia_file_pointer, "conv2.bias", bias_conv2)
+    call dalotia_load_tensor(dalotia_file_pointer, "conv3.bias", bias_conv3)
+    call dalotia_load_tensor(dalotia_file_pointer, "conv4.bias", bias_conv4)
+    call dalotia_load_tensor(dalotia_file_pointer, "conv1.weight", weight_conv1, permutation=[5, 4, 1, 2, 3]) ! load as HWCF
+    call dalotia_load_tensor(dalotia_file_pointer, "conv2.weight", weight_conv2, permutation=[5, 4, 1, 2, 3])
+    call dalotia_load_tensor(dalotia_file_pointer, "conv3.weight", weight_conv3, permutation=[5, 4, 1, 2, 3])
+    call dalotia_load_tensor(dalotia_file_pointer, "conv4.weight", weight_conv4, permutation=[5, 4, 1, 2, 3])
 
     call system_clock(start_time)
 #ifdef LIKWID_PERFMON
@@ -284,9 +283,9 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 #endif ! LIKWID_PERFMON
     call system_clock(end_time)
     call system_clock(count_rate=count_rate)
-    write(*,*) conv1_output(2, 2, 2, :, 1)
   
     duration = real(end_time-start_time, kind=real64)/real(count_rate, kind=real64)
+    call dalotia_close_file(dalotia_file_pointer)
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
     write(*,*) "Duration: ", duration, "s"
     write(*,*) "On average: ", duration/real(num_repetitions, kind=real64), "s"
@@ -308,6 +307,7 @@ subroutine raise_exception(message)
   print *,message
   i=1
   i=1/(i-i)
+  error stop
 end subroutine raise_exception
 
 subroutine assert(condition)
