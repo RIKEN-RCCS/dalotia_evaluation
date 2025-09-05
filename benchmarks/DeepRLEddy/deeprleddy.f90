@@ -38,7 +38,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     integer(kind=int64) :: i, o, r
     real(kind=real64) :: duration
     integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_threads, batch_size
-
     integer :: num_input_features = 3
     integer(kind=C_int) :: cacheflush_return_value
 
@@ -121,7 +120,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     batch_size = (num_inputs + num_threads - 1) / num_threads;
     write(*,*) "Using ", num_threads, " threads with batch size ", batch_size
 
-    call inference_direct_convolution(all_inputs, batch_size, all_outputs, duration)
+    call inference_direct_convolution(all_inputs, num_threads, batch_size, all_outputs, duration)
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
     write(*,*) "Duration: ", duration, "s"
     write(*,*) "On average: ", duration/real(num_repetitions, kind=real64), "s"
@@ -136,17 +135,19 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 #endif ! not DALOTIA_E_FOR_MEMORY_TRACE
 contains
 
-subroutine inference_direct_convolution(all_inputs, batch_size, all_outputs, duration)
+subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all_outputs, total_duration)
+    use omp_lib
     implicit none
     character(len=100) :: filename_model
     type(C_ptr) :: dalotia_file_pointer
     real(C_float), dimension(:, :, :, :, :, :), intent(in) :: all_inputs
-    integer, intent(in) :: batch_size
+    integer, intent(in) :: num_threads, batch_size
     real(C_float), dimension(:, :), intent(out) :: all_outputs
-    real(kind=real64), intent(out) :: duration
+    real(kind=real64), intent(out) :: total_duration
+    real(kind=real64) :: duration
     integer :: start_time, end_time, count_rate
-    integer :: num_repetitions, num_inputs, num_batches
-    integer :: r, b, o, i, j, k, l, m, n, f, c
+    integer :: num_repetitions, num_inputs, my_start_index, my_end_index, my_num_inputs, thread_num
+    integer :: r, o, i, j, k, l, m, n, f, c
     integer :: num_input_features, num_output_features
 
     ! fixed-size layer arrays
@@ -172,6 +173,11 @@ subroutine inference_direct_convolution(all_inputs, batch_size, all_outputs, dur
     filename_model = "./weights_DeepRLEddyNet.safetensors"
 
     dalotia_file_pointer = dalotia_open_file(trim(filename_model))
+!$OMP parallel default(none) &
+!$OMP& shared(all_inputs, all_outputs, num_threads, batch_size, num_repetitions, num_inputs, dalotia_file_pointer) &
+!$OMP& private(start_time, end_time, count_rate, duration, r, o, i, j, k, l, m, n, f, c, weight_conv1, weight_conv2, weight_conv3, weight_conv4, bias_conv1, bias_conv2, bias_conv3, bias_conv4, &
+!$OMP&         conv1_input, conv1_output, conv2_output, conv3_output, conv4_output, my_start_index, my_end_index, my_num_inputs, thread_num) &
+!$OMP& reduction(+:total_duration)
     call dalotia_load_tensor(dalotia_file_pointer, "conv1.bias", bias_conv1)
     call dalotia_load_tensor(dalotia_file_pointer, "conv2.bias", bias_conv2)
     call dalotia_load_tensor(dalotia_file_pointer, "conv3.bias", bias_conv3)
@@ -183,139 +189,146 @@ subroutine inference_direct_convolution(all_inputs, batch_size, all_outputs, dur
 
     conv1_input = 0.0 ! for the padding
 
+    thread_num = omp_get_thread_num();
+!$OMP barrier
     call system_clock(start_time)
 #ifdef LIKWID_PERFMON
     call likwid_markerInit()
     call likwid_markerRegisterRegion("DeepRLEddyNet")
     call likwid_markerStartRegion("DeepRLEddyNet")
 #endif ! LIKWID_PERFMON
-    num_batches = ceiling(real(num_inputs) / batch_size)
+    my_start_index = thread_num * batch_size + 1
+    my_num_inputs = min(batch_size, num_inputs - thread_num * batch_size);
+    if (my_num_inputs .le. 0) then
+      error stop "Not enough inputs for the number of threads"
+    end if
+    my_end_index = my_start_index + my_num_inputs - 1
+
     do r = 1, num_repetitions
-      do b = 0, num_batches-1 !concurrent (b = 1:num_batches)
-        ! apply convolution layers
-        do o = 1, min(batch_size, num_inputs-batch_size*b)
-          ! num_input_channels = size(weight_conv1, 1)
-          ! num_output_channels = size(weight_conv1, 2)
-          ! gcc$ ivdep
-          do i = 1, 6
-            do j = 1, 6
-              do k = 1, 6
-                do c = 1, size(weight_conv1, 2)
-                  ! padding: copy input to padded array in NHWDC format
-                  conv1_input(c, k+1, j+1, i+1, o) = all_inputs(k, j, i, c, b*batch_size+o, r)
-                end do
+      ! apply convolution layers
+      do o = 1, my_num_inputs
+        ! num_input_channels = size(weight_conv1, 1)
+        ! num_output_channels = size(weight_conv1, 2)
+        ! gcc$ ivdep
+        do i = 1, 6
+          do j = 1, 6
+            do k = 1, 6
+              do c = 1, size(weight_conv1, 2)
+                ! padding: copy input to padded array in NHWDC format
+                conv1_input(c, k+1, j+1, i+1, o) = all_inputs(k, j, i, c, my_start_index + o - 1, r)
               end do
             end do
           end do
         end do
-        do o = 1, batch_size
-          do i = 1, 6
-            do j = 1, 6
-              do k = 1, 6
-                ! fill with bias
-                conv1_output(:, k+1, j+1, i+1, o) = bias_conv1
-              end do
-            end do
-          end do
-          do l = -1, 1
-            do n = -1, 1
-              do m = -1, 1
-                ! gcc$ vector
-                do i = 2, 7
-                  do j = 1, 8
-                    do k = 1, 8
-                      do c = 1, size(weight_conv1, 2)
-                        do f = 1, size(weight_conv1, 1)
-                          ! apply 3*3*3 stencil
-                          conv1_output(f, k, j, i, o) = conv1_output(f, k, j, i, o) + weight_conv1(f,c,m,n,l) * conv1_input(c, k+m, j+n, i+l, o)
-                        end do
-                      end do
-                    end do
-                  end do
-                end do
-              end do
-            end do
-          end do
-        end do
-        !reLU
-        conv1_output = max(0.0, conv1_output)
-        do o = 1, batch_size
-          do i = 1, 4
-            do j = 1, 4
-              do k = 1, 4
-                ! fill with bias
-                conv2_output(:, k, j, i, o) = bias_conv2
-              end do
-            end do
-          end do
-          do l = -1, 1
-            do n = -1, 1
-              do m = -1, 1
-                do i = 1, 4
-                  do j = 1, 4
-                    do k = 1, 4
-                      do c = 1, size(weight_conv2, 2)
-                        do f = 1, size(weight_conv2, 1)
-                          ! apply 3*3*3 stencil
-                          conv2_output(f, k, j, i, o) = conv2_output(f, k, j, i, o) + weight_conv2(f,c, m,n,l) * conv1_output(c, k+m+2, j+n+2, i+l+2, o)
-                        end do
-                      end do
-                    end do
-                  end do
-                end do
-              end do
-            end do
-          end do
-        end do
-        !reLU
-        conv2_output = max(0.0, conv2_output)
-        do o = 1, batch_size
-          do i = 1, 2
-            do j = 1, 2
-              do k = 1, 2
-                ! fill with bias
-                conv3_output(:, k, j, i, o) = bias_conv3
-              end do
-            end do
-          end do
-          do l = -1, 1
-            do n = -1, 1
-              do m = -1, 1
-                do i = 1, 2
-                  do j = 1, 2
-                    do k = 1, 2
-                      do c = 1, size(weight_conv3, 2)
-                        do f = 1, size(weight_conv3, 1)
-                          ! apply 3*3*3 stencil
-                          conv3_output(f, k, j, i, o) = conv3_output(f, k, j, i, o) + weight_conv3(f,c,m,n,l) * conv2_output(c, k+m+1, j+n+1, i+l+1, o)
-                        end do
-                      end do
-                    end do
-                  end do
-                end do
-              end do
-            end do
-          end do
-        end do
-        !reLU
-        conv3_output = max(0.0, conv3_output)
-        ! fill with bias
-        conv4_output = bias_conv4(1)
-        do o = 1, batch_size
-          do l = 1, 2
-            do n = 1, 2
-              do m = 1, 2
-                do c = 1, size(weight_conv4, 2)
-                  ! apply 2*2*2 stencil
-                  conv4_output(o) = conv4_output(o) + weight_conv4(1,c,m,n,l) * conv3_output(c, m, n, l, o)
-                end do
-              end do
-            end do
-          end do
-        end do
-        ! half-sigmoid
-        all_outputs(b*batch_size+1:b*(batch_size+1),r) = 0.5 * 1. / (1. + exp(-conv4_output));
       end do
+      do o = 1, my_num_inputs
+        do i = 1, 6
+          do j = 1, 6
+            do k = 1, 6
+              ! fill with bias
+              conv1_output(:, k+1, j+1, i+1, o) = bias_conv1
+            end do
+          end do
+        end do
+        do l = -1, 1
+          do n = -1, 1
+            do m = -1, 1
+              ! gcc$ vector
+              do i = 2, 7
+                do j = 1, 8
+                  do k = 1, 8
+                    do c = 1, size(weight_conv1, 2)
+                      do f = 1, size(weight_conv1, 1)
+                        ! apply 3*3*3 stencil
+                        conv1_output(f, k, j, i, o) = conv1_output(f, k, j, i, o) + weight_conv1(f,c,m,n,l) * conv1_input(c, k+m, j+n, i+l, o)
+                      end do
+                    end do
+                  end do
+                end do
+              end do
+            end do
+          end do
+        end do
+      end do
+      !reLU
+      conv1_output = max(0.0, conv1_output)
+      do o = 1, batch_size
+        do i = 1, 4
+          do j = 1, 4
+            do k = 1, 4
+              ! fill with bias
+              conv2_output(:, k, j, i, o) = bias_conv2
+            end do
+          end do
+        end do
+        do l = -1, 1
+          do n = -1, 1
+            do m = -1, 1
+              do i = 1, 4
+                do j = 1, 4
+                  do k = 1, 4
+                    do c = 1, size(weight_conv2, 2)
+                      do f = 1, size(weight_conv2, 1)
+                        ! apply 3*3*3 stencil
+                        conv2_output(f, k, j, i, o) = conv2_output(f, k, j, i, o) + weight_conv2(f,c, m,n,l) * conv1_output(c, k+m+2, j+n+2, i+l+2, o)
+                      end do
+                    end do
+                  end do
+                end do
+              end do
+            end do
+          end do
+        end do
+      end do
+      !reLU
+      conv2_output = max(0.0, conv2_output)
+      do o = 1, batch_size
+        do i = 1, 2
+          do j = 1, 2
+            do k = 1, 2
+              ! fill with bias
+              conv3_output(:, k, j, i, o) = bias_conv3
+            end do
+          end do
+        end do
+        do l = -1, 1
+          do n = -1, 1
+            do m = -1, 1
+              do i = 1, 2
+                do j = 1, 2
+                  do k = 1, 2
+                    do c = 1, size(weight_conv3, 2)
+                      do f = 1, size(weight_conv3, 1)
+                        ! apply 3*3*3 stencil
+                        conv3_output(f, k, j, i, o) = conv3_output(f, k, j, i, o) + weight_conv3(f,c,m,n,l) * conv2_output(c, k+m+1, j+n+1, i+l+1, o)
+                      end do
+                    end do
+                  end do
+                end do
+              end do
+            end do
+          end do
+        end do
+      end do
+      !reLU
+      conv3_output = max(0.0, conv3_output)
+      ! fill with bias
+      conv4_output = bias_conv4(1)
+      do o = 1, batch_size
+        do l = 1, 2
+          do n = 1, 2
+            do m = 1, 2
+              do c = 1, size(weight_conv4, 2)
+                ! apply 2*2*2 stencil
+                conv4_output(o) = conv4_output(o) + weight_conv4(1,c,m,n,l) * conv3_output(c, m, n, l, o)
+              end do
+            end do
+          end do
+        end do
+      end do
+      ! half-sigmoid
+      all_outputs(my_start_index:my_end_index,r) = 0.5 * 1. / (1. + exp(-conv4_output));
+      !$OMP barrier
     end do
 #ifdef LIKWID_PERFMON
     call likwid_markerStopRegion("DeepRLEddyNet")
@@ -325,6 +338,9 @@ subroutine inference_direct_convolution(all_inputs, batch_size, all_outputs, dur
     call system_clock(count_rate=count_rate)
   
     duration = real(end_time-start_time, kind=real64)/real(count_rate, kind=real64)
+
+    total_duration = total_duration + duration
+!$OMP end parallel 
     call dalotia_close_file(dalotia_file_pointer)
 end subroutine inference_direct_convolution
 
