@@ -26,6 +26,47 @@
 #define LIKWID_MARKER_GET(regionTag, nevents, events, time, count)
 #endif  // LIKWID_PERFMON
 
+#include <omp.h>
+class OpenMPPrivateMemoryResource : public std::pmr::memory_resource
+{
+public:
+    explicit OpenMPPrivateMemoryResource(int NUMA_node = -1) noexcept : NUMA_node_(NUMA_node) {}
+    // (NUMA_node == -1) -> allocate on the NUMA node of the calling thread
+
+private:
+    omp_allocator_handle_t make_allocator(int NUMA_node, std::size_t alignment) const noexcept{
+        omp_memspace_handle_t ms = omp_low_lat_mem_space; // or omp_default_mem_space
+        omp_alloctrait_t traits[] {
+            {omp_atk_sync_hint, omp_atv_private},
+            {omp_atk_access, omp_atv_thread},
+            {omp_atk_partition, omp_atv_nearest},
+            {omp_atk_pinned, omp_atv_true},
+            {omp_atk_alignment, alignment},
+        }; // cf. https://www.openmp.org/spec-html/5.0/openmpsu53.html
+        return omp_init_allocator(ms, 2, traits);
+    }
+
+    void* do_allocate(std::size_t bytes, std::size_t alignment = 16) override {
+        if (bytes == 0) return nullptr;
+        allocator_ = make_allocator(NUMA_node_, alignment);
+        void* p = omp_alloc(bytes, allocator_);
+        if (!p) throw std::bad_alloc{};
+        return p;
+    }
+
+    void do_deallocate(void* p, std::size_t /*bytes*/, std::size_t /*alignment*/) noexcept override {
+        omp_free(p, allocator_);
+        omp_destroy_allocator(allocator_);
+    }
+
+    bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override{
+        return dynamic_cast<const OpenMPPrivateMemoryResource*>(&other) != nullptr;
+    }
+
+    int NUMA_node_;
+    omp_allocator_handle_t allocator_ = omp_null_allocator;
+};
+
 void assert_close(float a, float b, float tol = 1e-4) {
 #ifndef NDEBUG
     if (std::abs(a - b) >= tol) {
@@ -88,11 +129,13 @@ std::chrono::duration<double> run_inference_cblas(
         shared(input_tensors, input_sizes, num_repetitions, output_sizes, result_tensors, \
                dalotia_file, total_duration, num_threads, std::cout)
     {
-        //TODO test dalotia w/ annd w/o custom allocator
-        const auto [weights_extents_1, weights_1] = dalotia_file->load_tensor_dense<float>("fc1.weight");
-        const auto [biases_extents_1, biases_1] = dalotia_file->load_tensor_dense<float>("fc1.bias");
-        const auto [weights_extents_2, weights_2] = dalotia_file->load_tensor_dense<float>("fc2.weight");
-        const auto [biases_extents_2, biases_2] = dalotia_file->load_tensor_dense<float>("fc2.bias");
+        int target_node = omp_get_place_num();
+        OpenMPPrivateMemoryResource res(target_node);
+        // test dalotia w/ annd w/o custom allocator: no difference on CPU, leave in as an example
+        const auto [weights_extents_1, weights_1] = dalotia_file->load_tensor_dense<float>("fc1.weight", dalotia_float_32, dalotia_C_ordering,{}, &res);
+        const auto [biases_extents_1, biases_1] = dalotia_file->load_tensor_dense<float>("fc1.bias", dalotia_float_32, dalotia_C_ordering,{}, &res);
+        const auto [weights_extents_2, weights_2] = dalotia_file->load_tensor_dense<float>("fc2.weight", dalotia_float_32, dalotia_C_ordering,{}, &res);
+        const auto [biases_extents_2, biases_2] = dalotia_file->load_tensor_dense<float>("fc2.bias", dalotia_float_32, dalotia_C_ordering,{}, &res);
         const int num_output_features = output_sizes[1];
         const int num_input_features = input_sizes[1];
         const int num_inputs = input_sizes[0];
@@ -111,7 +154,7 @@ std::chrono::duration<double> run_inference_cblas(
         {
             std::cout << "Using " << num_threads << " threads with batch size " << batch_size << std::endl;
         }
-        dalotia::vector<float> hidden_values(batch_size * num_hidden_neurons, 0.); // &res
+        dalotia::vector<float> hidden_values(batch_size * num_hidden_neurons, 0., &res);
 
         auto thread_num = omp_get_thread_num();
         #pragma omp barrier
