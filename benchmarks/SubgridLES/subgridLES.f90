@@ -24,6 +24,7 @@ end module
 program subgridles_inference
 use dalotia_c_interface
 use cacheflush_interface
+use omp_lib
 #ifdef LIKWID_PERFMON
 use likwid
 #endif ! LIKWID_PERFMON
@@ -40,7 +41,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     ! increment variables
     integer(kind=int64) :: o, f, i, start_time, end_time, count_rate
     real(kind=real64) :: duration, total_duration = 0
-    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_threads, batch_size
+    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_threads, batch_size, my_num_inputs, thread_num, my_start_index, my_end_index
     integer :: num_input_features = size(weight_fc1, 1)
     integer :: num_hidden_neurons = size(weight_fc1, 2)
     integer :: num_output_features = size(weight_fc2, 2)
@@ -113,8 +114,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 #endif ! DALOTIA_E_FOR_MEMORY_TRACE
     call assert(size(inputs, 1) == num_input_features)
     ! allocate output array the same size as the read one
-    allocate(fc1_output(num_hidden_neurons, num_inputs))
-    allocate(fc2_output(num_output_features, num_inputs))
     allocate(all_outputs(num_output_features, num_inputs, num_repetitions))
 
     num_threads = 0
@@ -124,8 +123,8 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 
     dalotia_file_pointer = dalotia_open_file(trim(filename_model))
 !$OMP parallel default(none) &
-!$OMP& shared(all_inputs, num_inputs, num_input_features, num_hidden_neurons, num_repetitions, num_output_features, all_outputs, dalotia_file_pointer, total_duration, num_threads) &
-!$OMP& private (weight_fc1, bias_fc1, weight_fc2, bias_fc2, o, f, i, start_time, end_time, count_rate, duration, fc1_output, fc2_output)
+!$OMP& shared(all_inputs, num_inputs, num_input_features, num_hidden_neurons, num_repetitions, num_output_features, all_outputs, dalotia_file_pointer, num_threads) &
+!$OMP& private (weight_fc1, bias_fc1, weight_fc2, bias_fc2, o, f, i, start_time, end_time, count_rate, duration, fc1_output, fc2_output, my_num_inputs, thread_num, batch_size, my_start_index, my_end_index) &
 !$OMP& reduction(+:total_duration)
     ! load model weights
     call dalotia_load_tensor(dalotia_file_pointer, "fc1.bias", bias_fc1)
@@ -146,37 +145,50 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call assert_close_f(bias_fc2(1), 1.)
     call assert_close_f(bias_fc2(6), 0.16667)
 
+    batch_size = (num_inputs + num_threads - 1) / num_threads;
+!$OMP single
+    write(*,*) "Using ", num_threads, " threads with batch size ", batch_size
+!$OMP end single
+    allocate(fc1_output(num_hidden_neurons, batch_size))
+    allocate(fc2_output(num_output_features, batch_size))
+    thread_num = omp_get_thread_num();
+
     call system_clock(start_time)
 #ifdef LIKWID_PERFMON
     call likwid_markerInit()
     call likwid_markerRegisterRegion("SubgridLESNet")
     call likwid_markerStartRegion("SubgridLESNet")
 #endif ! LIKWID_PERFMON
+    my_start_index = thread_num * batch_size + 1
+    my_num_inputs = min(batch_size, num_inputs - thread_num * batch_size);
+    my_end_index = my_start_index + my_num_inputs - 1
     do i = 1, num_repetitions
        ! apply fully connected layer
-        do o = 1, num_inputs !concurrent (o = 1:num_inputs)
+        do o = 1, my_num_inputs
           ! fill with bias
           fc1_output(:,o) = bias_fc1(:)
         end do
         ! this here is more concise but slower due to intermediate arrays: 
-        ! fc1_output = spread(bias_fc1, 2, num_inputs)
-        ! fc1_output = matmul(transpose(weight_fc1), all_inputs(:, :, i)) + fc1_output
+        ! fc1_output = spread(bias_fc1, 2, my_num_inputs)
+        ! fc1_output = matmul(transpose(weight_fc1), all_inputs(:, my_start_index:my_end_index, i)) + fc1_output
 
-        call sgemm('T', 'N', num_hidden_neurons, num_inputs, num_input_features, 1.0, &
-                  weight_fc1, num_input_features, all_inputs(:, :, i), num_input_features,  1.0, &
+        call sgemm('T', 'N', num_hidden_neurons, my_num_inputs, num_input_features, 1.0, &
+                  weight_fc1, num_input_features, all_inputs(:, my_start_index:my_end_index, i), &
+                  num_input_features,  1.0, &
                   fc1_output, num_hidden_neurons)
 
         ! reLU:
         fc1_output = max(0.0, fc1_output)
   
-        do o = 1, num_inputs
+        do o = 1, my_num_inputs
           fc2_output(:,o) = bias_fc2(:)
         end do
 
-        call sgemm('T', 'N', num_output_features, num_inputs, num_hidden_neurons, 1.0, &
+        call sgemm('T', 'N', num_output_features, my_num_inputs, num_hidden_neurons, 1.0, &
                   weight_fc2, num_hidden_neurons, fc1_output, num_hidden_neurons,  1.0, &
                   fc2_output, num_output_features)
-        all_outputs(:,:,i) = fc2_output
+        all_outputs(:,my_start_index:my_end_index,i) = fc2_output
+!$OMP barrier
     end do
 #ifdef LIKWID_PERFMON
     call likwid_markerStopRegion("SubgridLESNet")
@@ -213,6 +225,7 @@ subroutine raise_exception(message)
   print *,message
   i=1
   i=1/(i-i)
+  error stop 
 end subroutine raise_exception
 
 subroutine assert(condition)
