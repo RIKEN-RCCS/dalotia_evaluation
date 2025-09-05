@@ -68,26 +68,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     filename_input = "./input_SubgridLESNet.safetensors"
     filename_output = "./output_SubgridLESNet.safetensors"
 
-    dalotia_file_pointer = dalotia_open_file(trim(filename_model))
-    call dalotia_load_tensor(dalotia_file_pointer, "fc1.bias", bias_fc1)
-    call dalotia_load_tensor(dalotia_file_pointer, "fc1.weight", weight_fc1)
-    call dalotia_load_tensor(dalotia_file_pointer, "fc2.bias", bias_fc2)
-    call dalotia_load_tensor(dalotia_file_pointer, "fc2.weight", weight_fc2)
-    call dalotia_close_file(dalotia_file_pointer)
-
-    call assert_close_f(weight_fc1(1,1), 0.3333)
-    call assert_close_f(weight_fc1(10,1), 0.0833)
-    call assert_close_f(weight_fc1(1,300), 0.00033)
-    call assert_close_f(weight_fc1(10,300), 0.00033)
-    call assert_close_f(bias_fc1(1), 0.3333)
-    call assert_close_f(bias_fc1(300), 0.0033)
-    call assert_close_f(weight_fc2(1,1), 1.)
-    call assert_close_f(weight_fc2(300,1), 0.00331)
-    call assert_close_f(weight_fc2(1,6), 0.00066)
-    call assert_close_f(weight_fc2(300,6), 0.000556)
-    call assert_close_f(bias_fc2(1), 1.)
-    call assert_close_f(bias_fc2(6), 0.16667)
-
 #ifdef DALOTIA_E_FOR_MEMORY_TRACE
     ! just allocate
     allocate(inputs(num_input_features, num_inputs))
@@ -136,6 +116,26 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     allocate(fc1_output(num_hidden_neurons, num_inputs))
     allocate(fc2_output(num_output_features, num_inputs))
     allocate(all_outputs(num_output_features, num_inputs, num_repetitions))
+
+    dalotia_file_pointer = dalotia_open_file(trim(filename_model))
+    call dalotia_load_tensor(dalotia_file_pointer, "fc1.bias", bias_fc1)
+    call dalotia_load_tensor(dalotia_file_pointer, "fc1.weight", weight_fc1)
+    call dalotia_load_tensor(dalotia_file_pointer, "fc2.bias", bias_fc2)
+    call dalotia_load_tensor(dalotia_file_pointer, "fc2.weight", weight_fc2)
+    call dalotia_close_file(dalotia_file_pointer)
+
+    call assert_close_f(weight_fc1(1,1), 0.3333)
+    call assert_close_f(weight_fc1(10,1), 0.0833)
+    call assert_close_f(weight_fc1(1,300), 0.00033)
+    call assert_close_f(weight_fc1(10,300), 0.00033)
+    call assert_close_f(bias_fc1(1), 0.3333)
+    call assert_close_f(bias_fc1(300), 0.0033)
+    call assert_close_f(weight_fc2(1,1), 1.)
+    call assert_close_f(weight_fc2(300,1), 0.00331)
+    call assert_close_f(weight_fc2(1,6), 0.00066)
+    call assert_close_f(weight_fc2(300,6), 0.000556)
+    call assert_close_f(bias_fc2(1), 1.)
+    call assert_close_f(bias_fc2(6), 0.16667)
 
     call system_clock(start_time)
 #ifdef LIKWID_PERFMON
