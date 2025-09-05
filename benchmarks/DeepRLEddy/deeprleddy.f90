@@ -30,33 +30,16 @@ use likwid
 use,intrinsic::ISO_C_BINDING, only : C_float, C_double
 use,intrinsic :: iso_fortran_env, only : int64,real64
   implicit none
-    character(len=100) :: filename_model, filename_input, filename_output
+    character(len=100) :: filename_input, filename_output
     character(len=8), dimension(:), allocatable :: args
     type(C_ptr) :: dalotia_file_pointer
 
     ! increment variables
-    integer(kind=int64) :: b, o, f, i, j, c, k, l, m, n, r, start_time, end_time, count_rate
+    integer(kind=int64) :: i, o, r
     real(kind=real64) :: duration
-    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_batches
-    integer, parameter :: batch_size = 2
+    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_threads, batch_size
 
-    ! fixed-size layer arrays
-    real(C_float) :: weight_conv1(8, 3, -1:1,-1:1,-1:1), &
-                     weight_conv2(8, 8, -1:1,-1:1,-1:1), &
-                     weight_conv3(4, 8, -1:1,-1:1,-1:1), &
-                     weight_conv4(1, 4,  2, 2, 2), &
-                     bias_conv1(8), &
-                     bias_conv2(8), &
-                     bias_conv3(4), &
-                     bias_conv4(1)
-    ! intermediate arrays
-    real(C_float), allocatable :: conv1_input (:, :, :, :, :)    
-    real(C_float), allocatable :: conv1_output(:, :, :, :, :)
-    real(C_float), allocatable :: conv2_output(:, :, :, :, :)
-    real(C_float), allocatable :: conv3_output(:, :, :, :, :)
-    real(C_float), allocatable :: conv4_output(:)
-
-    integer :: num_input_features = size(weight_conv1, 2)
+    integer :: num_input_features = 3
     integer(kind=C_int) :: cacheflush_return_value
 
     ! allocatable input arrays
@@ -79,7 +62,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 #else
     num_repetitions = 1000
 #endif ! DALOTIA_E_FOR_MEMORY_TRACE
-    filename_model = "./weights_DeepRLEddyNet.safetensors"
     filename_input = "./input_DeepRLEddyNet.safetensors"
     filename_output = "./output_DeepRLEddyNet.safetensors"
 
@@ -132,6 +114,63 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     ! allocate output array the same size as the read one
     allocate(all_outputs(num_inputs, num_repetitions))
 
+    num_threads = 0
+!$OMP parallel reduction(+:num_threads)
+    num_threads = num_threads + 1
+!$OMP end parallel 
+    batch_size = (num_inputs + num_threads - 1) / num_threads;
+    write(*,*) "Using ", num_threads, " threads with batch size ", batch_size
+
+    call inference_direct_convolution(all_inputs, batch_size, all_outputs, duration)
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
+    write(*,*) "Duration: ", duration, "s"
+    write(*,*) "On average: ", duration/real(num_repetitions, kind=real64), "s"
+
+  ! compare output
+    do r = 1, num_repetitions
+      do o = 1, num_inputs
+        call assert_close_f(all_outputs(o, r), outputs(o))
+      end do
+    end do
+    cacheflush_return_value = cf_finalize()
+#endif ! not DALOTIA_E_FOR_MEMORY_TRACE
+contains
+
+subroutine inference_direct_convolution(all_inputs, batch_size, all_outputs, duration)
+    implicit none
+    character(len=100) :: filename_model
+    type(C_ptr) :: dalotia_file_pointer
+    real(C_float), dimension(:, :, :, :, :, :), intent(in) :: all_inputs
+    integer, intent(in) :: batch_size
+    real(C_float), dimension(:, :), intent(out) :: all_outputs
+    real(kind=real64), intent(out) :: duration
+    integer :: start_time, end_time, count_rate
+    integer :: num_repetitions, num_inputs, num_batches
+    integer :: r, b, o, i, j, k, l, m, n, f, c
+    integer :: num_input_features, num_output_features
+
+    ! fixed-size layer arrays
+    real(C_float) :: weight_conv1(8, 3, -1:1,-1:1,-1:1), &
+                     weight_conv2(8, 8, -1:1,-1:1,-1:1), &
+                     weight_conv3(4, 8, -1:1,-1:1,-1:1), &
+                     weight_conv4(1, 4,  2, 2, 2), &
+                     bias_conv1(8), &
+                     bias_conv2(8), &
+                     bias_conv3(4), &
+                     bias_conv4(1)
+    ! intermediate arrays
+    real(C_float) :: conv1_input (3, 8, 8, 8, batch_size)
+    real(C_float) :: conv1_output(8, 8, 8, 8, batch_size)
+    real(C_float) :: conv2_output(8, 4, 4, 4, batch_size)
+    real(C_float) :: conv3_output(4, 2, 2, 2, batch_size)
+    real(C_float) :: conv4_output(batch_size)
+
+    num_repetitions = size(all_inputs, 6)
+    num_inputs = size(all_inputs, 5)
+    num_input_features = size(all_inputs, 4)
+    num_output_features = 1
+    filename_model = "./weights_DeepRLEddyNet.safetensors"
+
     dalotia_file_pointer = dalotia_open_file(trim(filename_model))
     call dalotia_load_tensor(dalotia_file_pointer, "conv1.bias", bias_conv1)
     call dalotia_load_tensor(dalotia_file_pointer, "conv2.bias", bias_conv2)
@@ -142,12 +181,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call dalotia_load_tensor(dalotia_file_pointer, "conv3.weight", weight_conv3, permutation=[5, 4, 1, 2, 3])
     call dalotia_load_tensor(dalotia_file_pointer, "conv4.weight", weight_conv4, permutation=[5, 4, 1, 2, 3])
 
-    allocate(conv1_input(3, 8, 8, 8, batch_size))
     conv1_input = 0.0 ! for the padding
-    allocate(conv1_output(8, 8, 8, 8, batch_size))
-    allocate(conv2_output(8, 4, 4, 4, batch_size))
-    allocate(conv3_output(4, 2, 2, 2, batch_size))
-    allocate(conv4_output(batch_size))
 
     call system_clock(start_time)
 #ifdef LIKWID_PERFMON
@@ -292,19 +326,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
   
     duration = real(end_time-start_time, kind=real64)/real(count_rate, kind=real64)
     call dalotia_close_file(dalotia_file_pointer)
-#ifndef DALOTIA_E_FOR_MEMORY_TRACE
-    write(*,*) "Duration: ", duration, "s"
-    write(*,*) "On average: ", duration/real(num_repetitions, kind=real64), "s"
-
-  ! compare output
-    do r = 1, num_repetitions
-      do o = 1, num_inputs
-        call assert_close_f(all_outputs(o, r), outputs(o))
-      end do
-    end do
-    cacheflush_return_value = cf_finalize()
-#endif ! not DALOTIA_E_FOR_MEMORY_TRACE
-contains
+end subroutine inference_direct_convolution
 
 !cf. https://stackoverflow.com/a/55376595
 subroutine raise_exception(message)
