@@ -107,9 +107,11 @@ std::chrono::duration<double> run_inference_cblas(
         assert(output_sizes == std::vector<int>({num_inputs, num_output_features}));
 
         int batch_size = (num_inputs + num_threads - 1) / num_threads;
-        std::cout << "Using " << num_threads << " threads with batch size " << batch_size << std::endl;
-        dalotia::vector<float> hidden_values(batch_size * num_hidden_neurons, 0.);
-        std::cout << "Allocated hidden layer of size " << hidden_values.size() << std::endl;
+        #pragma omp single
+        {
+            std::cout << "Using " << num_threads << " threads with batch size " << batch_size << std::endl;
+        }
+        dalotia::vector<float> hidden_values(batch_size * num_hidden_neurons, 0.); // &res
 
         auto thread_num = omp_get_thread_num();
         #pragma omp barrier
