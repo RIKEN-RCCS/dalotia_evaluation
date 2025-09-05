@@ -146,7 +146,7 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
     real(kind=real64), intent(out) :: total_duration
     real(kind=real64) :: duration
     integer :: start_time, end_time, count_rate
-    integer :: num_repetitions, num_inputs, my_start_index, my_end_index, my_num_inputs, thread_num
+    integer :: num_repetitions, num_inputs, this_thread_start_index, this_thread_end_index, this_thread_num_inputs, thread_num
     integer :: r, o, i, j, k, l, m, n, f, c
     integer :: num_input_features, num_output_features
 
@@ -176,7 +176,7 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
 !$OMP parallel default(none) &
 !$OMP& shared(all_inputs, all_outputs, num_threads, batch_size, num_repetitions, num_inputs, dalotia_file_pointer) &
 !$OMP& private(start_time, end_time, count_rate, duration, r, o, i, j, k, l, m, n, f, c, weight_conv1, weight_conv2, weight_conv3, weight_conv4, bias_conv1, bias_conv2, bias_conv3, bias_conv4, &
-!$OMP&         conv1_input, conv1_output, conv2_output, conv3_output, conv4_output, my_start_index, my_end_index, my_num_inputs, thread_num) &
+!$OMP&         conv1_input, conv1_output, conv2_output, conv3_output, conv4_output, this_thread_start_index, this_thread_end_index, this_thread_num_inputs, thread_num) &
 !$OMP& reduction(+:total_duration)
     call dalotia_load_tensor(dalotia_file_pointer, "conv1.bias", bias_conv1)
     call dalotia_load_tensor(dalotia_file_pointer, "conv2.bias", bias_conv2)
@@ -197,16 +197,16 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
     call likwid_markerRegisterRegion("DeepRLEddyNet")
     call likwid_markerStartRegion("DeepRLEddyNet")
 #endif ! LIKWID_PERFMON
-    my_start_index = thread_num * batch_size + 1
-    my_num_inputs = min(batch_size, num_inputs - thread_num * batch_size);
-    if (my_num_inputs .le. 0) then
+    this_thread_start_index = thread_num * batch_size + 1
+    this_thread_num_inputs = min(batch_size, num_inputs - thread_num * batch_size);
+    if (this_thread_num_inputs .le. 0) then
       error stop "Not enough inputs for the number of threads"
     end if
-    my_end_index = my_start_index + my_num_inputs - 1
+    this_thread_end_index = this_thread_start_index + this_thread_num_inputs - 1
 
     do r = 1, num_repetitions
       ! apply convolution layers
-      do o = 1, my_num_inputs
+      do o = 1, this_thread_num_inputs
         ! num_input_channels = size(weight_conv1, 1)
         ! num_output_channels = size(weight_conv1, 2)
         ! gcc$ ivdep
@@ -215,13 +215,13 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
             do k = 1, 6
               do c = 1, size(weight_conv1, 2)
                 ! padding: copy input to padded array in NHWDC format
-                conv1_input(c, k+1, j+1, i+1, o) = all_inputs(k, j, i, c, my_start_index + o - 1, r)
+                conv1_input(c, k+1, j+1, i+1, o) = all_inputs(k, j, i, c, this_thread_start_index + o - 1, r)
               end do
             end do
           end do
         end do
       end do
-      do o = 1, my_num_inputs
+      do o = 1, this_thread_num_inputs
         do i = 1, 6
           do j = 1, 6
             do k = 1, 6
@@ -327,7 +327,7 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
         end do
       end do
       ! half-sigmoid
-      all_outputs(my_start_index:my_end_index,r) = 0.5 * 1. / (1. + exp(-conv4_output));
+      all_outputs(this_thread_start_index:this_thread_end_index,r) = 0.5 * 1. / (1. + exp(-conv4_output));
       !$OMP barrier
     end do
 #ifdef LIKWID_PERFMON

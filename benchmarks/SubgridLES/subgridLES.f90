@@ -41,7 +41,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     ! increment variables
     integer(kind=int64) :: o, f, i, start_time, end_time, count_rate
     real(kind=real64) :: duration, total_duration = 0
-    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_threads, batch_size, my_num_inputs, thread_num, my_start_index, my_end_index
+    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_threads, batch_size, this_thread_num_inputs, thread_num, this_thread_start_index, this_thread_end_index
     integer :: num_input_features = size(weight_fc1, 1)
     integer :: num_hidden_neurons = size(weight_fc1, 2)
     integer :: num_output_features = size(weight_fc2, 2)
@@ -124,7 +124,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     dalotia_file_pointer = dalotia_open_file(trim(filename_model))
 !$OMP parallel default(none) &
 !$OMP& shared(all_inputs, num_inputs, num_input_features, num_hidden_neurons, num_repetitions, num_output_features, all_outputs, dalotia_file_pointer, num_threads) &
-!$OMP& private (weight_fc1, bias_fc1, weight_fc2, bias_fc2, o, f, i, start_time, end_time, count_rate, duration, fc1_output, fc2_output, my_num_inputs, thread_num, batch_size, my_start_index, my_end_index) &
+!$OMP& private (weight_fc1, bias_fc1, weight_fc2, bias_fc2, o, f, i, start_time, end_time, count_rate, duration, fc1_output, fc2_output, this_thread_num_inputs, thread_num, batch_size, this_thread_start_index, this_thread_end_index) &
 !$OMP& reduction(+:total_duration)
     ! load model weights
     call dalotia_load_tensor(dalotia_file_pointer, "fc1.bias", bias_fc1)
@@ -160,38 +160,38 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call likwid_markerRegisterRegion("SubgridLESNet")
     call likwid_markerStartRegion("SubgridLESNet")
 #endif ! LIKWID_PERFMON
-    my_start_index = thread_num * batch_size + 1
-    my_num_inputs = min(batch_size, num_inputs - thread_num * batch_size);
-    if (my_num_inputs .le. 0) then
+    this_thread_start_index = thread_num * batch_size + 1
+    this_thread_num_inputs = min(batch_size, num_inputs - thread_num * batch_size);
+    if (this_thread_num_inputs .le. 0) then
       error stop "Not enough inputs for the number of threads"
     end if
-    my_end_index = my_start_index + my_num_inputs - 1
+    this_thread_end_index = this_thread_start_index + this_thread_num_inputs - 1
     do i = 1, num_repetitions
         ! apply fully connected layer
-        do o = 1, my_num_inputs
+        do o = 1, this_thread_num_inputs
           ! fill with bias
           fc1_output(:,o) = bias_fc1(:)
         end do
         ! this here is more concise but slower due to intermediate arrays: 
-        ! fc1_output = spread(bias_fc1, 2, my_num_inputs)
-        ! fc1_output = matmul(transpose(weight_fc1), all_inputs(:, my_start_index:my_end_index, i)) + fc1_output
+        ! fc1_output = spread(bias_fc1, 2, this_thread_num_inputs)
+        ! fc1_output = matmul(transpose(weight_fc1), all_inputs(:, this_thread_start_index:this_thread_end_index, i)) + fc1_output
 
-        call sgemm('T', 'N', num_hidden_neurons, my_num_inputs, num_input_features, 1.0, &
-                  weight_fc1, num_input_features, all_inputs(:, my_start_index:my_end_index, i), &
+        call sgemm('T', 'N', num_hidden_neurons, this_thread_num_inputs, num_input_features, 1.0, &
+                  weight_fc1, num_input_features, all_inputs(:, this_thread_start_index:this_thread_end_index, i), &
                   num_input_features,  1.0, &
                   fc1_output, num_hidden_neurons)
 
         ! reLU:
         fc1_output = max(0.0, fc1_output)
 
-        do o = 1, my_num_inputs
+        do o = 1, this_thread_num_inputs
           fc2_output(:,o) = bias_fc2(:)
         end do
 
-        call sgemm('T', 'N', num_output_features, my_num_inputs, num_hidden_neurons, 1.0, &
+        call sgemm('T', 'N', num_output_features, this_thread_num_inputs, num_hidden_neurons, 1.0, &
                   weight_fc2, num_hidden_neurons, fc1_output, num_hidden_neurons,  1.0, &
                   fc2_output, num_output_features)
-        all_outputs(:,my_start_index:my_end_index,i) = fc2_output
+        all_outputs(:,this_thread_start_index:this_thread_end_index,i) = fc2_output
 !$OMP barrier
     end do
 #ifdef LIKWID_PERFMON

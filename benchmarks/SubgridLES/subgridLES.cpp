@@ -160,24 +160,24 @@ std::chrono::duration<double> run_inference_cblas(
         #pragma omp barrier
         LIKWID_MARKER_START("cblas");
         const auto start = std::chrono::high_resolution_clock::now();
-        const size_t my_inputs_start_index = thread_num * batch_size * num_input_features;
-        const int my_num_inputs = std::min(batch_size, num_inputs - thread_num * batch_size);
-        if (my_num_inputs <= 0) throw std::runtime_error("Too many threads for the given input size");
-        const size_t my_results_start_index = thread_num * batch_size * num_output_features;
+        const size_t this_thread_inputs_start_index = thread_num * batch_size * num_input_features;
+        const int this_thread_num_inputs = std::min(batch_size, num_inputs - thread_num * batch_size);
+        if (this_thread_num_inputs <= 0) throw std::runtime_error("Too many threads for the given input size");
+        const size_t this_thread_results_start_index = thread_num * batch_size * num_output_features;
             for (size_t r = 0; r < num_repetitions; ++r) {
             const auto& inputs = input_tensors[r];
             auto& results = result_tensors[r];
 
             // fill hidden vector with bias
-            for (size_t i = 0; i < my_num_inputs; ++i) {
+            for (size_t i = 0; i < this_thread_num_inputs; ++i) {
                 for (size_t j = 0; j < num_hidden_neurons; ++j) {
                     hidden_values[i * num_hidden_neurons + j] = biases_1[j];
                 }
             }
             // todo compare to cblasRowMajor
             cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, num_hidden_neurons,
-                        my_num_inputs, num_input_features, 1.0, weights_1.data(),
-                        num_input_features, &inputs[my_inputs_start_index], num_input_features, 1.0,
+                        this_thread_num_inputs, num_input_features, 1.0, weights_1.data(),
+                        num_input_features, &inputs[this_thread_inputs_start_index], num_input_features, 1.0,
                         hidden_values.data(), num_hidden_neurons);
             // ReLU
             for (auto& value : hidden_values) {
@@ -185,21 +185,21 @@ std::chrono::duration<double> run_inference_cblas(
             }
 
             // fill results vector with bias
-            for (size_t i = 0; i < my_num_inputs; ++i) {
+            for (size_t i = 0; i < this_thread_num_inputs; ++i) {
                 for (size_t j = 0; j < output_sizes[1]; ++j) {
-                    results[my_results_start_index + i * output_sizes[1] + j] = biases_2[j];
+                    results[this_thread_results_start_index + i * output_sizes[1] + j] = biases_2[j];
                 }
             }
             cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, num_output_features,
-                        my_num_inputs, num_hidden_neurons, 1.0, weights_2.data(),
+                        this_thread_num_inputs, num_hidden_neurons, 1.0, weights_2.data(),
                         num_hidden_neurons, hidden_values.data(), num_hidden_neurons, 1.0,
-                        &results[my_results_start_index], num_output_features);
+                        &results[this_thread_results_start_index], num_output_features);
             #pragma omp barrier
         }
         LIKWID_MARKER_STOP("cblas");
-        auto my_duration = std::chrono::high_resolution_clock::now() - start;
+        auto this_thread_duration = std::chrono::high_resolution_clock::now() - start;
         #pragma omp reduction(+:total_duration)
-        total_duration += my_duration;
+        total_duration += this_thread_duration;
     }
     return total_duration;
 }
