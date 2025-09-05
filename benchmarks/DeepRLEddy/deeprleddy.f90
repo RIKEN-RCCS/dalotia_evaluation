@@ -40,7 +40,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_batches
     integer, parameter :: batch_size = 2
 
-    ! fixed-size input arrays
+    ! fixed-size layer arrays
     real(C_float) :: weight_conv1(8, 3, -1:1,-1:1,-1:1), &
                      weight_conv2(8, 8, -1:1,-1:1,-1:1), &
                      weight_conv3(4, 8, -1:1,-1:1,-1:1), &
@@ -50,11 +50,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
                      bias_conv3(4), &
                      bias_conv4(1)
     ! intermediate arrays
-    real(C_float) :: conv1_input(3, 8, 8, 8, batch_size), &
-                     conv1_output(8, 8, 8, 8, batch_size), &
-                     conv2_output(8, 4, 4, 4, batch_size), &
-                     conv3_output(4, 2, 2, 2, batch_size), &
-                     conv4_output(batch_size)
+    real(C_float), allocatable :: conv1_input (:, :, :, :, :)    
+    real(C_float), allocatable :: conv1_output(:, :, :, :, :)
+    real(C_float), allocatable :: conv2_output(:, :, :, :, :)
+    real(C_float), allocatable :: conv3_output(:, :, :, :, :)
+    real(C_float), allocatable :: conv4_output(:)
 
     integer :: num_input_features = size(weight_conv1, 2)
     integer(kind=C_int) :: cacheflush_return_value
@@ -64,7 +64,6 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     real(C_float), dimension(:, :), allocatable :: all_outputs
     real(C_float), dimension(:, :, :, :, :), allocatable :: inputs, temp_inputs
     real(C_float), dimension(:, :, :, :, :, :), allocatable :: all_inputs
-
 
     num_inputs = 16*16*16
     num_args = command_argument_count()
@@ -142,6 +141,13 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call dalotia_load_tensor(dalotia_file_pointer, "conv2.weight", weight_conv2, permutation=[5, 4, 1, 2, 3])
     call dalotia_load_tensor(dalotia_file_pointer, "conv3.weight", weight_conv3, permutation=[5, 4, 1, 2, 3])
     call dalotia_load_tensor(dalotia_file_pointer, "conv4.weight", weight_conv4, permutation=[5, 4, 1, 2, 3])
+
+    allocate(conv1_input(3, 8, 8, 8, batch_size))
+    conv1_input = 0.0 ! for the padding
+    allocate(conv1_output(8, 8, 8, 8, batch_size))
+    allocate(conv2_output(8, 4, 4, 4, batch_size))
+    allocate(conv3_output(4, 2, 2, 2, batch_size))
+    allocate(conv4_output(batch_size))
 
     call system_clock(start_time)
 #ifdef LIKWID_PERFMON
