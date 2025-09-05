@@ -153,6 +153,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     allocate(fc2_output(num_output_features, batch_size))
     thread_num = omp_get_thread_num();
 
+!$OMP barrier
     call system_clock(start_time)
 #ifdef LIKWID_PERFMON
     call likwid_markerInit()
@@ -161,9 +162,12 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 #endif ! LIKWID_PERFMON
     my_start_index = thread_num * batch_size + 1
     my_num_inputs = min(batch_size, num_inputs - thread_num * batch_size);
+    if (my_num_inputs .le. 0) then
+      error stop "Not enough inputs for the number of threads"
+    end if
     my_end_index = my_start_index + my_num_inputs - 1
     do i = 1, num_repetitions
-       ! apply fully connected layer
+        ! apply fully connected layer
         do o = 1, my_num_inputs
           ! fill with bias
           fc1_output(:,o) = bias_fc1(:)
@@ -179,7 +183,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 
         ! reLU:
         fc1_output = max(0.0, fc1_output)
-  
+
         do o = 1, my_num_inputs
           fc2_output(:,o) = bias_fc2(:)
         end do
