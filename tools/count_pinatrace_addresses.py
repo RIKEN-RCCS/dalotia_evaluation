@@ -1,6 +1,7 @@
 # %%
 import pandas as pd
 import argparse as arg
+from os.path import abspath
 
 # %%
 if __name__ == "__main__":
@@ -11,4 +12,6 @@ if __name__ == "__main__":
     columns=['requesting_address', 'R/W', 'address']
     # set header
     df.columns = columns
+    absolute_path = abspath(args.input)
+    print("Number of unique addresses in {}: ".format(absolute_path))
     print(df['address'].nunique())
