@@ -113,8 +113,19 @@ void conv3d_with_relu_naive(
             const dalotia::vector<float> &input_tensor,
             const std::array<int, 5> &input_extents,
             dalotia::vector<float> &output) {
-    const auto& [F, C, L, M, N] = conv_weight_extents;
-    const auto& [num_inputs, C2, K, I, J] = input_extents;
+    // error: capturing a structured binding is not yet supported in OpenMP (some compilers)
+    // const auto& [F, C, L, M, N] = conv_weight_extents;
+    const int& F = conv_weight_extents[0];
+    const int& C = conv_weight_extents[1];
+    const int& L = conv_weight_extents[2];
+    const int& M = conv_weight_extents[3];
+    const int& N = conv_weight_extents[4];
+    // const auto& [num_inputs, C2, K, I, J] = input_extents;
+    const int& num_inputs = input_extents[0];
+    const int& C2 = input_extents[1];
+    const int& K = input_extents[2];
+    const int& I = input_extents[3];
+    const int& J = input_extents[4];
     assert(C2 == C);
     const std::array<int, 5> output_extents = {num_inputs, F, K - 2, I - 2, J - 2};
     assert(output.size() == std::accumulate(output_extents.begin(), output_extents.end(), 1, std::multiplies<int>()));
