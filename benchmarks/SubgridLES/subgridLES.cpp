@@ -127,7 +127,8 @@ std::chrono::duration<double> run_inference_cblas(
     num_threads += 1;
     #pragma omp parallel default(none) \
         shared(input_tensors, input_sizes, num_repetitions, output_sizes, result_tensors, \
-               dalotia_file, total_duration, num_threads, std::cout)
+               dalotia_file, num_threads, std::cout) \
+        reduction(+:total_duration)
     {
         int target_node = omp_get_place_num();
         OpenMPPrivateMemoryResource res(target_node);
@@ -198,7 +199,6 @@ std::chrono::duration<double> run_inference_cblas(
         }
         LIKWID_MARKER_STOP("cblas");
         auto this_thread_duration = std::chrono::high_resolution_clock::now() - start;
-        #pragma omp reduction(+:total_duration)
         total_duration += this_thread_duration;
     }
     return total_duration;
