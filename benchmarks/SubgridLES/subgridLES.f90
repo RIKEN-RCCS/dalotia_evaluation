@@ -127,10 +127,12 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 !$OMP& private (weight_fc1, bias_fc1, weight_fc2, bias_fc2, o, f, i, start_time, end_time, count_rate, duration, fc1_output, fc2_output, this_thread_num_inputs, thread_num, batch_size, this_thread_start_index, this_thread_end_index) &
 !$OMP& reduction(+:total_duration)
     ! load model weights
+!$OMP critical
     call dalotia_load_tensor(dalotia_file_pointer, "fc1.bias", bias_fc1)
     call dalotia_load_tensor(dalotia_file_pointer, "fc1.weight", weight_fc1)
     call dalotia_load_tensor(dalotia_file_pointer, "fc2.bias", bias_fc2)
     call dalotia_load_tensor(dalotia_file_pointer, "fc2.weight", weight_fc2)
+!$OMP end critical
 
     call assert_close_f(weight_fc1(1,1), 0.3333)
     call assert_close_f(weight_fc1(10,1), 0.0833)
@@ -146,9 +148,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call assert_close_f(bias_fc2(6), 0.16667)
 
     batch_size = (num_inputs + num_threads - 1) / num_threads;
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
 !$OMP single
     write(*,*) "Using ", num_threads, " threads with batch size ", batch_size
 !$OMP end single
+#endif ! not DALOTIA_E_FOR_MEMORY_TRACE
     allocate(fc1_output(num_hidden_neurons, batch_size))
     allocate(fc2_output(num_output_features, batch_size))
     thread_num = omp_get_thread_num();
@@ -205,6 +209,7 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
 
     total_duration = total_duration + duration
 !$OMP end parallel 
+
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
     write(*,*) "Duration: ", total_duration, "s"
     write(*,*) "On average: ", total_duration/real(num_repetitions, kind=real64), "s"

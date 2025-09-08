@@ -133,10 +133,12 @@ std::chrono::duration<double> run_inference_cblas(
         int target_node = omp_get_place_num();
         OpenMPPrivateMemoryResource res(target_node);
         // test dalotia w/ annd w/o custom allocator: no difference on CPU, leave in as an example
-        const auto [weights_extents_1, weights_1] = dalotia_file->load_tensor_dense<float>("fc1.weight", dalotia_float_32, dalotia_C_ordering,{}, &res);
-        const auto [biases_extents_1, biases_1] = dalotia_file->load_tensor_dense<float>("fc1.bias", dalotia_float_32, dalotia_C_ordering,{}, &res);
-        const auto [weights_extents_2, weights_2] = dalotia_file->load_tensor_dense<float>("fc2.weight", dalotia_float_32, dalotia_C_ordering,{}, &res);
-        const auto [biases_extents_2, biases_2] = dalotia_file->load_tensor_dense<float>("fc2.bias", dalotia_float_32, dalotia_C_ordering,{}, &res);
+        #pragma omp critical{
+            const auto [weights_extents_1, weights_1] = dalotia_file->load_tensor_dense<float>("fc1.weight", dalotia_float_32, dalotia_C_ordering,{}, &res);
+            const auto [biases_extents_1, biases_1] = dalotia_file->load_tensor_dense<float>("fc1.bias", dalotia_float_32, dalotia_C_ordering,{}, &res);
+            const auto [weights_extents_2, weights_2] = dalotia_file->load_tensor_dense<float>("fc2.weight", dalotia_float_32, dalotia_C_ordering,{}, &res);
+            const auto [biases_extents_2, biases_2] = dalotia_file->load_tensor_dense<float>("fc2.bias", dalotia_float_32, dalotia_C_ordering,{}, &res);
+        }
         const int num_output_features = output_sizes[1];
         const int num_input_features = input_sizes[1];
         const int num_inputs = input_sizes[0];
@@ -151,10 +153,12 @@ std::chrono::duration<double> run_inference_cblas(
         assert(output_sizes == std::vector<int>({num_inputs, num_output_features}));
 
         int batch_size = (num_inputs + num_threads - 1) / num_threads;
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
         #pragma omp single
         {
             std::cout << "Using " << num_threads << " threads with batch size " << batch_size << std::endl;
         }
+#endif // not DALOTIA_E_FOR_MEMORY_TRACE
         dalotia::vector<float> hidden_values(batch_size * num_hidden_neurons, 0., &res);
 
         auto thread_num = omp_get_thread_num();

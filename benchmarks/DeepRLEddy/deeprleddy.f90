@@ -118,7 +118,11 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     num_threads = num_threads + 1
 !$OMP end parallel 
     batch_size = (num_inputs + num_threads - 1) / num_threads;
+#ifndef DALOTIA_E_FOR_MEMORY_TRACE
+!$OMP single
     write(*,*) "Using ", num_threads, " threads with batch size ", batch_size
+!$OMP end single
+#endif ! not DALOTIA_E_FOR_MEMORY_TRACE
 
     call inference_direct_convolution(all_inputs, num_threads, batch_size, all_outputs, duration)
 #ifndef DALOTIA_E_FOR_MEMORY_TRACE
@@ -178,6 +182,8 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
 !$OMP& private(start_time, end_time, count_rate, duration, r, o, i, j, k, l, m, n, f, c, weight_conv1, weight_conv2, weight_conv3, weight_conv4, bias_conv1, bias_conv2, bias_conv3, bias_conv4, &
 !$OMP&         conv1_input, conv1_output, conv2_output, conv3_output, conv4_output, this_thread_start_index, this_thread_end_index, this_thread_num_inputs, thread_num) &
 !$OMP& reduction(+:total_duration)
+
+!$OMP critical
     call dalotia_load_tensor(dalotia_file_pointer, "conv1.bias", bias_conv1)
     call dalotia_load_tensor(dalotia_file_pointer, "conv2.bias", bias_conv2)
     call dalotia_load_tensor(dalotia_file_pointer, "conv3.bias", bias_conv3)
@@ -186,6 +192,7 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
     call dalotia_load_tensor(dalotia_file_pointer, "conv2.weight", weight_conv2, permutation=[5, 4, 1, 2, 3])
     call dalotia_load_tensor(dalotia_file_pointer, "conv3.weight", weight_conv3, permutation=[5, 4, 1, 2, 3])
     call dalotia_load_tensor(dalotia_file_pointer, "conv4.weight", weight_conv4, permutation=[5, 4, 1, 2, 3])
+!$OMP end critical
 
     conv1_input = 0.0 ! for the padding
 
