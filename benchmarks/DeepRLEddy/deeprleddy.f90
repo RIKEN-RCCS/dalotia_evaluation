@@ -181,7 +181,7 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
 !$OMP& shared(all_inputs, all_outputs, num_threads, batch_size, num_repetitions, num_inputs, dalotia_file_pointer) &
 !$OMP& private(start_time, end_time, count_rate, duration, r, o, i, j, k, l, m, n, f, c, weight_conv1, weight_conv2, weight_conv3, weight_conv4, bias_conv1, bias_conv2, bias_conv3, bias_conv4, &
 !$OMP&         conv1_input, conv1_output, conv2_output, conv3_output, conv4_output, this_thread_start_index, this_thread_end_index, this_thread_num_inputs, thread_num) &
-!$OMP& reduction(+:total_duration)
+!$OMP& reduction(max:total_duration)
 
 !$OMP critical
     call dalotia_load_tensor(dalotia_file_pointer, "conv1.bias", bias_conv1)
@@ -346,8 +346,8 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
   
     duration = real(end_time-start_time, kind=real64)/real(count_rate, kind=real64)
 
-    total_duration = total_duration + duration
-!$OMP end parallel 
+    total_duration = max(total_duration, duration)
+!$OMP end parallel
     call dalotia_close_file(dalotia_file_pointer)
 end subroutine inference_direct_convolution
 

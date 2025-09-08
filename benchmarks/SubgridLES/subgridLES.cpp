@@ -120,25 +120,24 @@ std::chrono::duration<double> run_inference_cblas(
     // load the model
     std::string filename = "./weights_SubgridLESNet.safetensors";
     auto dalotia_file = std::unique_ptr<dalotia::TensorFile>(dalotia::make_tensor_file(filename));
-    
-    std::chrono::duration<double> total_duration(0);
+
+    auto total_duration = std::chrono::high_resolution_clock::duration::zero();
     int num_threads = 0;
     #pragma omp parallel reduction(+:num_threads)
     num_threads += 1;
     #pragma omp parallel default(none) \
         shared(input_tensors, input_sizes, num_repetitions, output_sizes, result_tensors, \
-               dalotia_file, num_threads, std::cout) \
-        reduction(+:total_duration)
+               dalotia_file, num_threads, total_duration, std::cout)  //\
+        // reduction(max:total_duration)
     {
         int target_node = omp_get_place_num();
         OpenMPPrivateMemoryResource res(target_node);
-        // test dalotia w/ annd w/o custom allocator: no difference on CPU, leave in as an example
-        #pragma omp critical{
-            const auto [weights_extents_1, weights_1] = dalotia_file->load_tensor_dense<float>("fc1.weight", dalotia_float_32, dalotia_C_ordering,{}, &res);
-            const auto [biases_extents_1, biases_1] = dalotia_file->load_tensor_dense<float>("fc1.bias", dalotia_float_32, dalotia_C_ordering,{}, &res);
-            const auto [weights_extents_2, weights_2] = dalotia_file->load_tensor_dense<float>("fc2.weight", dalotia_float_32, dalotia_C_ordering,{}, &res);
-            const auto [biases_extents_2, biases_2] = dalotia_file->load_tensor_dense<float>("fc2.bias", dalotia_float_32, dalotia_C_ordering,{}, &res);
-        }
+        // test dalotia w/ annd w/o custom allocator: no difference on CPU w/ gcc, leave in as an example
+        
+        const auto [weights_extents_1, weights_1] = dalotia_file->load_tensor_dense<float>("fc1.weight", dalotia_float_32, dalotia_C_ordering,{}, &res);
+        const auto [biases_extents_1, biases_1] = dalotia_file->load_tensor_dense<float>("fc1.bias", dalotia_float_32, dalotia_C_ordering,{}, &res);
+        const auto [weights_extents_2, weights_2] = dalotia_file->load_tensor_dense<float>("fc2.weight", dalotia_float_32, dalotia_C_ordering,{}, &res);
+        const auto [biases_extents_2, biases_2] = dalotia_file->load_tensor_dense<float>("fc2.bias", dalotia_float_32, dalotia_C_ordering,{}, &res);
         const int num_output_features = output_sizes[1];
         const int num_input_features = input_sizes[1];
         const int num_inputs = input_sizes[0];
@@ -203,7 +202,10 @@ std::chrono::duration<double> run_inference_cblas(
         }
         LIKWID_MARKER_STOP("cblas");
         auto this_thread_duration = std::chrono::high_resolution_clock::now() - start;
-        total_duration += this_thread_duration;
+        #pragma omp critical
+        {
+            total_duration = std::max(this_thread_duration, total_duration);
+        }
     }
     return total_duration;
 }
