@@ -11,7 +11,7 @@ def data_frame_from_file(file_name, label_pattern, value_pattern, floatify=True)
         for line in f:
             label = re.findall(label_pattern, line)
             if len(label) > 0:
-                current_label = label[0]
+                current_label = int(label[0])
                 if current_label not in data:
                     data[current_label] = []
             # Check if the line matches the value pattern
@@ -47,30 +47,14 @@ if __name__ == "__main__":
 
     with open(args.input, "r") as f:
         contents = f.read()
-    label_pattern = r"input_size (\d+)"
-    input_sizes = re.findall(label_pattern, contents)
-    input_sizes = [int(size) for size in input_sizes]
-    print(input_sizes)
+    if "tN" in args.input:
+        label_pattern = r"Using OMP_NUM_THREADS=(\d+)"
+    else:
+        label_pattern = r"input_size (\d+) "
+    labels = re.findall(label_pattern, contents)
+    labels = [int(label) for label in labels]
+    print(labels)
 
-    columns = [
-        "input_size",
-        "deeprleddy-intel-open-fortran",
-        "deeprleddy-intel-open-dnnl",
-        "deeprleddy-intel-open-libtorch",
-        "deeprleddy-intel-open-pytorch",
-        "subgridles-intel-open-cpp",
-        "subgridles-intel-open-fortran",
-        "subgridles-intel-open-libtorch",
-        "subgridles-intel-open-pytorch",
-        "deeprleddy-intel-mkl-fortran",
-        "deeprleddy-intel-mkl-dnnl",
-        "deeprleddy-intel-mkl-libtorch",
-        "deeprleddy-intel-mkl-pytorch",
-        "subgridles-intel-mkl-cpp",
-        "subgridles-intel-mkl-fortran",
-        "subgridles-intel-mkl-libtorch",
-        "subgridles-intel-mkl-pytorch",
-    ]
     if args.type == "runtime":
         # find all occurrences of On average: followed by a number,
         # with the input length listed between them in the file
@@ -112,6 +96,10 @@ if __name__ == "__main__":
         )
         result_df = data_frame_from_file(args.input, label_pattern, value_pattern)
 
+    ## see the data divided by the input sizes
+    # pd.set_option("display.precision", 10)
+    # print(result_df.div(result_df.index.values, axis=0))
+    
     # if the sizes don't match, find the failed runs and add this to the output file:
     """
     On average: 0.0 s
@@ -120,6 +108,29 @@ if __name__ == "__main__":
     | SP [MFLOP/s] | 0.0 |
     | Operational intensity [FLOP/Byte] | 0.0 |
     """
+    if "SubgridLES" in args.input:
+        columns = [
+            "input_size",
+            "subgridles-intel-open-cpp",
+            "subgridles-intel-open-fortran",
+            "subgridles-intel-open-libtorch",
+            "subgridles-intel-mkl-cpp",
+            "subgridles-intel-mkl-fortran",
+            "subgridles-intel-mkl-pytorch",
+        ]
+    elif "DeepRLEddy" in args.input:
+        columns = [
+            "input_size",
+            "deeprleddy-intel-open-dnnl",
+            "deeprleddy-intel-open-fortran",
+            "deeprleddy-intel-open-libtorch",
+            "deeprleddy-intel-mkl-dnnl",
+            "deeprleddy-intel-mkl-fortran",
+            "deeprleddy-intel-mkl-pytorch",
+        ]
+    if args.type == "memory":
+        # no memory measurements for pytorch
+        columns = columns[:-1]
     result_df.columns = columns[1:]
     result_df.index.name = columns[0]
     print(result_df)
