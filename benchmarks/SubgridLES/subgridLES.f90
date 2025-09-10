@@ -25,11 +25,11 @@ program subgridles_inference
 use dalotia_c_interface
 use cacheflush_interface
 use omp_lib
+use,intrinsic::ISO_C_BINDING, only : C_float, C_double
+use,intrinsic :: iso_fortran_env, only : int64,real64
 #ifdef LIKWID_PERFMON
 use likwid
 #endif ! LIKWID_PERFMON
-use,intrinsic::ISO_C_BINDING, only : C_float, C_double
-use,intrinsic :: iso_fortran_env, only : int64,real64
   implicit none
     character(len=100) :: filename_model, filename_input, filename_output
     character(len=8), dimension(:), allocatable :: args
@@ -51,6 +51,10 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     real(C_float), dimension(:, :), allocatable :: inputs, temp_inputs, fc1_output, fc2_output, outputs, temp_outputs
     real(C_float), dimension(:, :, :), allocatable :: all_inputs, all_outputs
 
+#ifdef LIKWID_PERFMON
+    call likwid_markerInit()
+#endif ! LIKWID_PERFMON
+ 
     num_inputs = 16*16*16
     num_args = command_argument_count()
     allocate(args(num_args))
@@ -156,14 +160,12 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     allocate(fc1_output(num_hidden_neurons, batch_size))
     allocate(fc2_output(num_output_features, batch_size))
     thread_num = omp_get_thread_num();
-
-!$OMP barrier
-    call system_clock(start_time)
 #ifdef LIKWID_PERFMON
-    call likwid_markerInit()
     call likwid_markerRegisterRegion("SubgridLESNet")
     call likwid_markerStartRegion("SubgridLESNet")
 #endif ! LIKWID_PERFMON
+!$OMP barrier
+    call system_clock(start_time)
     this_thread_start_index = thread_num * batch_size + 1
     this_thread_num_inputs = min(batch_size, num_inputs - thread_num * batch_size);
     if (this_thread_num_inputs .le. 0) then
