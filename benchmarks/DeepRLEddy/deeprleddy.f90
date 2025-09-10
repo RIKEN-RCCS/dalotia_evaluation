@@ -47,6 +47,10 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     real(C_float), dimension(:, :, :, :, :), allocatable :: inputs, temp_inputs
     real(C_float), dimension(:, :, :, :, :, :), allocatable :: all_inputs
 
+#ifdef LIKWID_PERFMON
+    call likwid_markerInit()
+#endif ! LIKWID_PERFMON
+
     num_inputs = 16*16*16
     num_args = command_argument_count()
     allocate(args(num_args))
@@ -197,13 +201,13 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
     conv1_input = 0.0 ! for the padding
 
     thread_num = omp_get_thread_num();
-!$OMP barrier
-    call system_clock(start_time)
 #ifdef LIKWID_PERFMON
-    call likwid_markerInit()
     call likwid_markerRegisterRegion("DeepRLEddyNet")
+!$OMP barrier
     call likwid_markerStartRegion("DeepRLEddyNet")
 #endif ! LIKWID_PERFMON
+!$OMP barrier
+    call system_clock(start_time)
     this_thread_start_index = thread_num * batch_size + 1
     this_thread_num_inputs = min(batch_size, num_inputs - thread_num * batch_size);
     if (this_thread_num_inputs .le. 0) then

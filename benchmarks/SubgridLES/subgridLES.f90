@@ -162,6 +162,7 @@ use likwid
     thread_num = omp_get_thread_num();
 #ifdef LIKWID_PERFMON
     call likwid_markerRegisterRegion("SubgridLESNet")
+!OMP barrier
     call likwid_markerStartRegion("SubgridLESNet")
 #endif ! LIKWID_PERFMON
 !$OMP barrier
