@@ -208,6 +208,13 @@ if (DALOTIA_E_WITH_BOOST_MULTI)
   target_link_libraries(multi INTERFACE ${BLAS_LIBRARIES})
 endif (DALOTIA_E_WITH_BOOST_MULTI)
 
+if (CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
+  # temporary arrays larger than 100kB should be placed on the heap (avoids segfault from stack overflow)
+  add_compile_options(
+    "$<$<COMPILE_LANGUAGE:Fortran>:-heap-arrays:100>"
+  )
+endif()
+
 find_package(OpenMP) #TODO this should not be always on?
 
 add_subdirectory(cacheflush)
