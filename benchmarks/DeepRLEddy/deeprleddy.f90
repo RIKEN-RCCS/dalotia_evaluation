@@ -183,8 +183,10 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
     dalotia_file_pointer = dalotia_open_file(trim(filename_model))
 !$OMP parallel default(none) &
 !$OMP& shared(all_inputs, all_outputs, num_threads, batch_size, num_repetitions, num_inputs, dalotia_file_pointer) &
-!$OMP& private(start_time, end_time, count_rate, duration, r, o, i, j, k, l, m, n, f, c, weight_conv1, weight_conv2, weight_conv3, weight_conv4, bias_conv1, bias_conv2, bias_conv3, bias_conv4, &
-!$OMP&         conv1_input, conv1_output, conv2_output, conv3_output, conv4_output, this_thread_start_index, this_thread_end_index, this_thread_num_inputs, thread_num) &
+!$OMP& private(start_time, end_time, count_rate, duration, r, o, i, j, k, l, m, n, f, c, &
+!$OMP&         weight_conv1, weight_conv2, weight_conv3, weight_conv4, bias_conv1, bias_conv2, bias_conv3, bias_conv4, &
+!$OMP&         conv1_input, conv1_output, conv2_output, conv3_output, conv4_output, &
+!$OMP&         this_thread_start_index, this_thread_end_index, this_thread_num_inputs, thread_num) &
 !$OMP& reduction(max:total_duration)
 
 !$OMP critical
@@ -251,7 +253,8 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
                     do c = 1, size(weight_conv1, 2)
                       do f = 1, size(weight_conv1, 1)
                         ! apply 3*3*3 stencil
-                        conv1_output(f, k, j, i, o) = conv1_output(f, k, j, i, o) + weight_conv1(f,c,m,n,l) * conv1_input(c, k+m, j+n, i+l, o)
+                        conv1_output(f, k, j, i, o) = conv1_output(f, k, j, i, o) + &
+                                                      weight_conv1(f,c,m,n,l) * conv1_input(c, k+m, j+n, i+l, o)
                       end do
                     end do
                   end do
@@ -281,7 +284,8 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
                     do c = 1, size(weight_conv2, 2)
                       do f = 1, size(weight_conv2, 1)
                         ! apply 3*3*3 stencil
-                        conv2_output(f, k, j, i, o) = conv2_output(f, k, j, i, o) + weight_conv2(f,c, m,n,l) * conv1_output(c, k+m+2, j+n+2, i+l+2, o)
+                        conv2_output(f, k, j, i, o) = conv2_output(f, k, j, i, o) + &
+                                                      weight_conv2(f,c, m,n,l) * conv1_output(c, k+m+2, j+n+2, i+l+2, o)
                       end do
                     end do
                   end do
@@ -311,7 +315,8 @@ subroutine inference_direct_convolution(all_inputs, num_threads, batch_size, all
                     do c = 1, size(weight_conv3, 2)
                       do f = 1, size(weight_conv3, 1)
                         ! apply 3*3*3 stencil
-                        conv3_output(f, k, j, i, o) = conv3_output(f, k, j, i, o) + weight_conv3(f,c,m,n,l) * conv2_output(c, k+m+1, j+n+1, i+l+1, o)
+                        conv3_output(f, k, j, i, o) = conv3_output(f, k, j, i, o) + &
+                                                      weight_conv3(f,c,m,n,l) * conv2_output(c, k+m+1, j+n+1, i+l+1, o)
                       end do
                     end do
                   end do
