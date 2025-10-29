@@ -41,7 +41,8 @@ use likwid
     ! increment variables
     integer(kind=int64) :: o, f, i, start_time, end_time, count_rate
     real(kind=real64) :: duration, total_duration = 0
-    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_threads, batch_size, this_thread_num_inputs, thread_num, this_thread_start_index, this_thread_end_index
+    integer :: num_args, num_inputs_loaded, num_inputs, num_repetitions, num_threads, &
+               batch_size, this_thread_num_inputs, thread_num, this_thread_start_index, this_thread_end_index
     integer :: num_input_features = size(weight_fc1, 1)
     integer :: num_hidden_neurons = size(weight_fc1, 2)
     integer :: num_output_features = size(weight_fc2, 2)
@@ -127,8 +128,11 @@ use likwid
 
     dalotia_file_pointer = dalotia_open_file(trim(filename_model))
 !$OMP parallel default(none) &
-!$OMP& shared(all_inputs, num_inputs, num_input_features, num_hidden_neurons, num_repetitions, num_output_features, all_outputs, dalotia_file_pointer, num_threads) &
-!$OMP& private (weight_fc1, bias_fc1, weight_fc2, bias_fc2, o, f, i, start_time, end_time, count_rate, duration, fc1_output, fc2_output, this_thread_num_inputs, thread_num, batch_size, this_thread_start_index, this_thread_end_index) &
+!$OMP& shared(all_inputs, num_inputs, num_input_features, num_hidden_neurons, &
+!$OMP&        num_repetitions, num_output_features, all_outputs, dalotia_file_pointer, num_threads) &
+!$OMP& private (weight_fc1, bias_fc1, weight_fc2, bias_fc2, o, f, i, start_time, end_time, &
+!$OMP&          count_rate, duration, fc1_output, fc2_output, this_thread_num_inputs, thread_num, &
+!$OMP&          batch_size, this_thread_start_index, this_thread_end_index) &
 !$OMP& reduction(max:total_duration)
     ! load model weights
 !$OMP critical
