@@ -28,7 +28,7 @@ def data_frame_from_file(file_name, label_pattern, value_pattern, floatify=True)
     # Convert to DataFrame
     df = pd.DataFrame.from_dict(data, orient="index")
     df.index.name = "label"
-    print("test \n", df)
+    print(df)
     return df
 
 
@@ -50,7 +50,7 @@ if __name__ == "__main__":
     if "tN" in args.input:
         label_pattern = r"Using OMP_NUM_THREADS=(\d+)"
     else:
-        label_pattern = r"input_size (\d+) "
+        label_pattern = r"input_size (\d+)"
     labels = re.findall(label_pattern, contents)
     labels = [int(label) for label in labels]
     print(labels)
@@ -128,9 +128,10 @@ if __name__ == "__main__":
             "deeprleddy-intel-mkl-fortran",
             "deeprleddy-intel-mkl-pytorch",
         ]
-    if args.type == "memory":
-        # no memory measurements for pytorch
+    if args.type != "runtime":
+        # no memory and likwid measurements for pytorch
         columns = columns[:-1]
+        pass
     result_df.columns = columns[1:]
     result_df.index.name = columns[0]
     print(result_df)
