@@ -9,7 +9,11 @@ option(DALOTIA_E_WITH_NDIRECT "include ndirect for convolution operations on ARM
 option(DALOTIA_E_WITH_LIBTORCH "include libtorch for jitted tensor operations" OFF)
 option(DALOTIA_E_WITH_ONEDNN "include oneDNN for tensor operations" OFF)
 option(DALOTIA_E_WITH_CPPFLOW "include cppflow for tensor operations through Tensorflow C API" OFF)
+option(DALOTIA_E_WITH_CACHEFLUSH "use cache flush (bundled here) to flush caches before measurement" ON)
 option(DALOTIA_E_WITH_FORTRAN "Build Fortran executables" ON)
+if (DALOTIA_E_WITH_CACHEFLUSH)
+  add_definitions(-DDALOTIA_E_WITH_CACHEFLUSH)
+endif (DALOTIA_E_WITH_CACHEFLUSH)
 if (DALOTIA_E_WITH_FORTRAN)
     enable_language(Fortran)
 endif (DALOTIA_E_WITH_FORTRAN)
@@ -216,6 +220,7 @@ if (CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
 endif()
 
 find_package(OpenMP) #TODO this should not be always on?
-
-add_subdirectory(cacheflush)
+if (DALOTIA_E_WITH_CACHEFLUSH)
+  add_subdirectory(cacheflush)
+endif (DALOTIA_E_WITH_CACHEFLUSH)
 add_subdirectory(benchmarks)

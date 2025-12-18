@@ -23,7 +23,10 @@ end module
 
 program deeprleddy_inference
 use dalotia_c_interface
+
+#ifdef DALOTIA_E_WITH_CACHEFLUSH
 use cacheflush_interface
+#endif ! DALOTIA_E_WITH_CACHEFLUSH
 #ifdef LIKWID_PERFMON
 use likwid
 #endif ! LIKWID_PERFMON
@@ -107,11 +110,14 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
     call assert(size(all_inputs, 3) == size(inputs,3))
     call assert(size(all_inputs, 4) == size(inputs,4))
     call assert(size(all_inputs, 5) == size(inputs,5))
+
+#ifdef DALOTIA_E_WITH_CACHEFLUSH
     cacheflush_return_value = cf_init()
     cacheflush_return_value = cf_flush(3)
     if (cacheflush_return_value .ne. 0) then
       error stop "cacheflush failed"
     endif
+#endif ! DALOTIA_E_WITH_CACHEFLUSH
 #endif ! DALOTIA_E_FOR_MEMORY_TRACE
     call assert(size(inputs, 4) == num_input_features)
     ! allocate output array the same size as the read one
@@ -139,7 +145,10 @@ use,intrinsic :: iso_fortran_env, only : int64,real64
         call assert_close_f(all_outputs(o, r), outputs(o))
       end do
     end do
+
+#ifdef DALOTIA_E_WITH_CACHEFLUSH
     cacheflush_return_value = cf_finalize()
+#endif ! DALOTIA_E_WITH_CACHEFLUSH
 #endif ! not DALOTIA_E_FOR_MEMORY_TRACE
 contains
 

@@ -1,6 +1,8 @@
 add_executable( neuralClosure_cpp neuralClosure.cpp )
 target_link_libraries( neuralClosure_cpp PUBLIC dalotia::dalotia_cpp )
-target_link_libraries( neuralClosure_cpp PRIVATE cacheflush )
+if (DALOTIA_E_WITH_CACHEFLUSH)
+  target_link_libraries( neuralClosure_cpp PRIVATE cacheflush )
+endif()
 
 if (DALOTIA_E_FOR_MEMORY_TRACE)
     target_compile_definitions(neuralClosure_cpp PRIVATE DALOTIA_E_FOR_MEMORY_TRACE)

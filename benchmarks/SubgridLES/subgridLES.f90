@@ -23,7 +23,9 @@ end module
 
 program subgridles_inference
 use dalotia_c_interface
+#ifdef DALOTIA_E_WITH_CACHEFLUSH
 use cacheflush_interface
+#endif ! DALOTIA_E_WITH_CACHEFLUSH
 use omp_lib
 use,intrinsic::ISO_C_BINDING, only : C_float, C_double
 use,intrinsic :: iso_fortran_env, only : int64,real64
@@ -46,7 +48,9 @@ use likwid
     integer :: num_input_features = size(weight_fc1, 1)
     integer :: num_hidden_neurons = size(weight_fc1, 2)
     integer :: num_output_features = size(weight_fc2, 2)
+#ifdef DALOTIA_E_WITH_CACHEFLUSH
     integer(kind=C_int) :: cacheflush_return_value
+#endif ! DALOTIA_E_WITH_CACHEFLUSH
 
     ! allocatable input arrays
     real(C_float), dimension(:, :), allocatable :: inputs, temp_inputs, fc1_output, fc2_output, outputs, temp_outputs
@@ -111,11 +115,14 @@ use likwid
     call move_alloc(from=temp_outputs, to=outputs)
 
     all_inputs = spread(inputs, 3, num_repetitions)
+
+#ifdef DALOTIA_E_WITH_CACHEFLUSH
     cacheflush_return_value = cf_init()
     cacheflush_return_value = cf_flush(3)
     if (cacheflush_return_value .ne. 0) then
       error stop "cacheflush failed"
     endif
+#endif ! DALOTIA_E_WITH_CACHEFLUSH
 #endif ! DALOTIA_E_FOR_MEMORY_TRACE
     call assert(size(inputs, 1) == num_input_features)
     ! allocate output array the same size as the read one
@@ -229,7 +236,10 @@ use likwid
         end do
       end do
     end do
+
+#ifdef DALOTIA_E_WITH_CACHEFLUSH
     cacheflush_return_value = cf_finalize()
+#endif ! DALOTIA_E_WITH_CACHEFLUSH
 #endif ! not DALOTIA_E_FOR_MEMORY_TRACE
   call dalotia_close_file(dalotia_file_pointer)
 contains
