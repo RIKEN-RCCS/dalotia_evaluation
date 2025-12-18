@@ -21,4 +21,4 @@ This will put the executables in the build directory
 ## Running the benchmarks and postprocessing
 
 [See this Zenodo repository](https://zenodo.org/records/15129650) for additional scripts and commands 
-to perform the experiments [published at SCA'24](https://doi.org/10.1145/3773656.3773664).
+to perform the experiments [published at SCA'26](https://doi.org/10.1145/3773656.3773664).
