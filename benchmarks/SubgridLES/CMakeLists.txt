@@ -34,7 +34,7 @@ if (DALOTIA_E_WITH_FORTRAN)
       subgridLES.f90
       PROPERTIES Fortran_PREPROCESS ON
     )
-    target_include_directories( subgridLES_fortran PUBLIC $<TARGET_PROPERTY:dalotia::dalotia_fortran,Fortran_MODULE_DIRECTORY>)
+    target_include_directories( subgridLES_fortran PUBLIC $<TARGET_PROPERTY:dalotia::dalotia_fortran,INTERFACE_INCLUDE_DIRECTORIES>)
     set_target_properties(subgridLES_fortran PROPERTIES LINKER_LANGUAGE Fortran)
     target_link_libraries(subgridLES_fortran PRIVATE BLAS::BLAS)
     target_link_libraries( subgridLES_fortran PUBLIC dalotia::dalotia_fortran )

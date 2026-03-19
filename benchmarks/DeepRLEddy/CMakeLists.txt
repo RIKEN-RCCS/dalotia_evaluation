@@ -37,7 +37,7 @@ if (DALOTIA_E_WITH_FORTRAN)
     deeprleddy.f90
     PROPERTIES Fortran_PREPROCESS ON
   )
-  target_include_directories( deeprleddy_fortran PUBLIC $<TARGET_PROPERTY:dalotia::dalotia_fortran,Fortran_MODULE_DIRECTORY>)
+  target_include_directories( deeprleddy_fortran PUBLIC $<TARGET_PROPERTY:dalotia::dalotia_fortran,INTERFACE_INCLUDE_DIRECTORIES>)
   set_target_properties(deeprleddy_fortran PROPERTIES LINKER_LANGUAGE Fortran)
   target_link_libraries(deeprleddy_fortran PRIVATE BLAS::BLAS)
   target_link_libraries( deeprleddy_fortran PUBLIC dalotia::dalotia_fortran )

@@ -41,6 +41,12 @@ if (NOT DEFINED dalotia_DIR OR dalotia_DIR MATCHES "fetch")
   message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
 else()
   find_package(dalotia REQUIRED)
+  # When using an installed dalotia, derive the source/data dir from dalotia_DIR
+  get_filename_component(_dalotia_prefix "${dalotia_DIR}/../../.." ABSOLUTE)
+  get_filename_component(_dalotia_source "${_dalotia_prefix}/.." ABSOLUTE)
+  if(EXISTS "${_dalotia_source}/data")
+    set(DALOTIA_CPP_INCLUDE_DIR "${_dalotia_source}")
+  endif()
 endif()
 
 if(DALOTIA_E_WITH_CPPFLOW)

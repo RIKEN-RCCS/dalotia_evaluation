@@ -1,5 +1,5 @@
 add_executable( mnist_cpp mnist.cpp )
-target_link_libraries( mnist_cpp PUBLIC dalotia_cpp )
+target_link_libraries( mnist_cpp PUBLIC dalotia::dalotia_cpp )
 # use openblas header
 target_include_directories( mnist_cpp PUBLIC ${BLAS_INCLUDE_DIRS})
 target_link_libraries(mnist_cpp PRIVATE BLAS::BLAS)
@@ -29,10 +29,10 @@ endif ()
 if (DALOTIA_E_WITH_FORTRAN)
     add_executable( mnist_fortran mnist.f90 ) #TODO this does not put the executable in the compile / link line??? -> newer cmake works
     # add sources
-    target_include_directories( mnist_fortran PUBLIC $<TARGET_PROPERTY:dalotia_fortran,Fortran_MODULE_DIRECTORY>)
+    target_include_directories( mnist_fortran PUBLIC $<TARGET_PROPERTY:dalotia::dalotia_fortran,INTERFACE_INCLUDE_DIRECTORIES>)
     set_target_properties(mnist_fortran PROPERTIES LINKER_LANGUAGE Fortran)
     target_link_libraries(mnist_fortran PRIVATE BLAS::BLAS)
-    target_link_libraries( mnist_fortran PUBLIC dalotia_fortran )
+    target_link_libraries( mnist_fortran PUBLIC dalotia::dalotia_fortran )
 endif (DALOTIA_E_WITH_FORTRAN)
 
 # download the mnist test data
