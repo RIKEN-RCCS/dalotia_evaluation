@@ -30,3 +30,37 @@ jobs:
         build-args: --config ${{ matrix.build_type }}
         # cxx-compiler: ${{ matrix.compiler }}
         build-dir: build-${{ matrix.build_type }}
+
+  build-cublas:
+    name: Build with cuBLAS (compile-only)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install OpenBLAS
+      run: sudo apt-get install libopenblas-dev
+
+    - name: Checkout
+      uses: actions/checkout@v4.2.0
+
+    - name: Install CUDA Toolkit
+      uses: Jimver/cuda-toolkit@8022558310ea543e35132143092835585f60e628 # v0.2.21
+      id: cuda-toolkit
+      with:
+        cuda: '12.6.3'
+        method: 'network'
+        sub-packages: '["nvcc", "cudart-dev"]'
+        non-cuda-sub-packages: '["libcufile-dev", "libcublas-dev"]'
+
+    # https://github.com/actions/checkout/issues/462#issuecomment-1697584038
+    - name: Configure CMake (fetch dalotia with cuFile)
+      env:
+        GH_PAT: ${{ secrets.READ_TOKEN }}
+      run: |
+        sed -i 's|git@github.com:|https://$ENV\{GH_PAT\}@github.com/|g' CMakeLists.txt
+        cmake -S . -B build-cublas
+
+    - name: Configure and Build with cuBLAS
+      uses: threeal/cmake-action@v1.3.0
+      with:
+        run-build: true
+        options: DALOTIA_E_WITH_CUBLAS=ON DALOTIA_E_WITH_FORTRAN=OFF DALOTIA_E_WITH_CACHEFLUSH=OFF
+        build-dir: build-cublas

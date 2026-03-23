@@ -9,6 +9,7 @@ option(DALOTIA_E_WITH_NDIRECT "include ndirect for convolution operations on ARM
 option(DALOTIA_E_WITH_LIBTORCH "include libtorch for jitted tensor operations" OFF)
 option(DALOTIA_E_WITH_ONEDNN "include oneDNN for tensor operations" OFF)
 option(DALOTIA_E_WITH_CPPFLOW "include cppflow for tensor operations through Tensorflow C API" OFF)
+option(DALOTIA_E_WITH_CUBLAS "Build cuBLAS GPU benchmarks" OFF)
 option(DALOTIA_E_WITH_CACHEFLUSH "use cache flush (bundled here) to flush caches before measurement" ON)
 option(DALOTIA_E_WITH_FORTRAN "Build Fortran executables" ON)
 if (DALOTIA_E_WITH_CACHEFLUSH)
@@ -26,6 +27,7 @@ message(STATUS "CMAKE BUILD TYPE: ${CMAKE_BUILD_TYPE}")
 include(ExternalProject)
 include(FetchContent)
 if (NOT DEFINED dalotia_DIR OR dalotia_DIR MATCHES "fetch")
+  message(STATUS "dalotia: using FetchContent (dalotia_DIR not set or matches 'fetch')")
   FetchContent_Declare(
     dalotia
     GIT_REPOSITORY https://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@github.com/RIKEN-RCCS/dalotia.git #TODO replace w/ https
@@ -40,6 +42,7 @@ if (NOT DEFINED dalotia_DIR OR dalotia_DIR MATCHES "fetch")
   message(STATUS "DALOTIA_CPP_INCLUDE_DIR: ${DALOTIA_CPP_INCLUDE_DIR}")
   message(STATUS "DALOTIA_CPP_LIBRARY: ${DALOTIA_CPP_LIBRARY}")
 else()
+  message(STATUS "dalotia: using find_package with dalotia_DIR=${dalotia_DIR}")
   find_package(dalotia REQUIRED)
   # When using an installed dalotia, derive the source/data dir from dalotia_DIR
   get_filename_component(_dalotia_prefix "${dalotia_DIR}/../../.." ABSOLUTE)
@@ -224,6 +227,11 @@ if (CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
     "$<$<COMPILE_LANGUAGE:Fortran>:-heap-arrays:100>"
   )
 endif()
+
+if (DALOTIA_E_WITH_CUBLAS)
+  enable_language(CUDA)
+  find_package(CUDAToolkit REQUIRED)
+endif (DALOTIA_E_WITH_CUBLAS)
 
 find_package(OpenMP) #TODO this should not be always on?
 if (DALOTIA_E_WITH_CACHEFLUSH)
