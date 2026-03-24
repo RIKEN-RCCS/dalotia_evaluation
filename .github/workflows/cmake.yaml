@@ -8,6 +8,7 @@ jobs:
       matrix:
         build_type: [Debug, Release]
         # compiler: [gcc, clang]
+      fail-fast: false
     name: Dalotia Evaluation Build
     runs-on: ubuntu-latest
     steps:
