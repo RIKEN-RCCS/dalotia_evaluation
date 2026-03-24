@@ -9,17 +9,15 @@
 #include "dalotia.hpp"
 #include "dalotia_safetensors_file.hpp"
 
-// for cblas_sgemm:
-#include "cblas.h"
-
-// Kokkos mdspan?
-// #include "mdspan/mdspan.hpp"
-
+// Boost.Multi must be included BEFORE cblas.h — multi's blas/core.hpp
+// uses an #ifdef CBLAS_H guard that skips type definitions needed later.
 #ifdef DALOTIA_E_WITH_BOOST_MULTI
 #include <boost/multi/array.hpp>
-#include <multi/adaptors/blas.hpp>
-// #include <multi/adaptors/tblis.hpp>
+#include <boost/multi/adaptors/blas.hpp>
 #endif  // DALOTIA_E_WITH_BOOST_MULTI
+
+// for cblas_sgemm:
+#include "cblas.h"
 
 #ifdef DALOTIA_E_WITH_NDIRECT
 #include <NDIRECT_direct.h>
@@ -465,49 +463,52 @@ std::ostream &operator<<(
     return os;
 }
 
-void run_inference_boost_multi(std::string filename) {
+std::chrono::duration<double> run_inference_boost_multi(
+    const dalotia::vector<float> &conv1_weight,
+    const dalotia::vector<float> &conv1_bias,
+    const std::array<int, 4> &conv1_weight_extents,
+    const dalotia::vector<float> &conv2_weight,
+    const dalotia::vector<float> &conv2_bias,
+    const std::array<int, 4> &conv2_weight_extents,
+    const dalotia::vector<float> &fc1_weight,
+    const dalotia::vector<float> &fc1_bias,
+    const std::array<int, 2> &fc1_weight_extents,
+    const dalotia::vector<float> &images, const dalotia::vector<float> &labels,
+    dalotia::vector<int> &results) {
     using span_4d_float = multi::array_ref<float, 4>;
     using span_3d_float = multi::array_ref<float, 3>;
     using span_2d_float = multi::array_ref<float, 2>;
 
-    auto [conv1_weight, conv1_bias] =
-        test_load(filename, "conv1");  // TODO why can't I make them const?
-    const auto conv1_weight_span =
-        span_4d_float({8, 1, 3, 3}, conv1_weight.data());
-    const auto conv1_bias_span = span_2d_float({8, 1}, conv1_bias.data());
+    const auto conv1_weight_span = span_4d_float(
+        {conv1_weight_extents[0], conv1_weight_extents[1],
+         conv1_weight_extents[2], conv1_weight_extents[3]},
+        const_cast<float*>(conv1_weight.data()));
+    const auto conv1_bias_span = span_2d_float(
+        {conv1_weight_extents[0], 1}, const_cast<float*>(conv1_bias.data()));
     assert(conv1_weight_span.sizes().get<1>() == 1);  // 1 input channel
 
-    auto [conv2_weight, conv2_bias] = test_load(filename, "conv2");
-    const auto conv2_weight_span =
-        span_4d_float({16, 8, 3, 3}, conv1_weight.data());
-    const auto conv2_bias_span = span_2d_float({16, 1}, conv2_bias.data());
+    const auto conv2_weight_span = span_4d_float(
+        {conv2_weight_extents[0], conv2_weight_extents[1],
+         conv2_weight_extents[2], conv2_weight_extents[3]},
+        const_cast<float*>(conv2_weight.data()));
+    const auto conv2_bias_span = span_2d_float(
+        {conv2_weight_extents[0], 1}, const_cast<float*>(conv2_bias.data()));
 
-    auto [fc1_weight, fc1_bias] = test_load(filename, "fc1");
-    const auto fc1_weight_span = span_2d_float({10, 784}, fc1_weight.data());
-    const auto fc1_bias_span = span_2d_float({10, 1}, fc1_bias.data());
+    const auto fc1_weight_span = span_2d_float(
+        {fc1_weight_extents[0], fc1_weight_extents[1]},
+        const_cast<float*>(fc1_weight.data()));
 
-    // load the mnist test data // as in
-    // https://medium.com/@myringoleMLGOD/simple-convolutional-neural-network-cnn-for-dummies-in-pytorch-a-step-by-step-guide-6f4109f6df80
-    // too
-    std::string mnist_test_images_filename = "t10k-images-idx3-ubyte";
-    std::string mnist_test_labels_filename = "t10k-labels-idx3-ubyte";
-
-    auto images = read_mnist_scaled(mnist_test_images_filename);
-    // auto labels = read_mnist(mnist_test_labels_filename);
     auto total_num_images = images.size() / (28 * 28);
 
-    // minibatching
     constexpr size_t batch_size = 64;
-    auto num_batches = static_cast<int>(
+    auto num_batches = static_cast<size_t>(
         std::ceil(total_num_images / static_cast<float>(batch_size)));
-    for (size_t batch_index = 0; batch_index < 1; ++batch_index) {
+
+    const auto start = std::chrono::high_resolution_clock::now();
+    for (size_t batch_index = 0; batch_index < num_batches; ++batch_index) {
         auto num_images_in_batch =
             std::min(batch_size, total_num_images - batch_index * batch_size);
         auto inum_images_in_batch = static_cast<int>(num_images_in_batch);
-        std::cout << "batch index: " << batch_index << " / " << num_batches
-                  << " num images in batch: " << num_images_in_batch
-                  << std::endl;
-
         // apply first convolution
         // copy data to larger array for zero-padding at the edges
         auto image_vector_padded =
@@ -515,18 +516,9 @@ void run_inference_boost_multi(std::string filename) {
         auto image_padded_span = span_3d_float({inum_images_in_batch, 30, 30},
                                                image_vector_padded.data());
 
-        std::cout << "image_padded "
-                  << image_padded_span(
-                         0, multi::_,
-                         multi::_)  // <- TODO why does this segfault on fugaku?
-                  << std::endl;
-
         image_padded_span(multi::_, {1, 29}, {1, 29}) =
             span_3d_float({inum_images_in_batch, 28, 28},
-                          images.data() + batch_index * (batch_size * 28 * 28));
-
-        std::cout << "image_padded " << image_padded_span(0, multi::_, multi::_)
-                  << std::endl;
+                          const_cast<float*>(images.data()) + batch_index * (batch_size * 28 * 28));
 
         auto conv1_output =
             dalotia::vector<float>(num_images_in_batch * 8 * 28 * 28);
@@ -584,15 +576,15 @@ void run_inference_boost_multi(std::string filename) {
         auto conv1_output_pooled_span = span_4d_float(
             {inum_images_in_batch, 8, 14, 14}, conv1_output_pooled.data());
 #pragma omp parallel for
-        for (int o = 0; o < num_images_in_batch; ++o) {
+        for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int k = 0; k < 8; ++k) {
                 for (int i = 0; i < 14; ++i) {
                     for (int j = 0; j < 14; ++j) {
-                        auto window = conv1_output_span(
-                            o, k, {2 * i, 2 * i + 1}, {2 * j, 2 * j + 1});
-                        auto max_val = (*std::max_element(window.begin(),
-                                                          window.end()))[0];
-                        conv1_output_pooled_span(o, k, i, j) = max_val;
+                        float mv = 0;
+                        for (int m = 0; m < 2; ++m)
+                            for (int n = 0; n < 2; ++n)
+                                mv = std::max(mv, conv1_output_span(o, k, 2*i+m, 2*j+n));
+                        conv1_output_pooled_span(o, k, i, j) = mv;
                     }
                 }
             }
@@ -637,26 +629,26 @@ void run_inference_boost_multi(std::string filename) {
                         for (int l = 0; l < conv2_weight_span.sizes().get<1>();
                              ++l) {
                             value +=
-                                conv2_weight_span(l, k, 0, 0) *
+                                conv2_weight_span(k, l, 0, 0) *
                                     c_feature_padded_span(o, l, i - 1, j - 1) +
-                                conv2_weight_span(l, k, 0, 1) *
+                                conv2_weight_span(k, l, 0, 1) *
                                     c_feature_padded_span(o, l, i - 1, j + 0) +
-                                conv2_weight_span(l, k, 0, 2) *
+                                conv2_weight_span(k, l, 0, 2) *
                                     c_feature_padded_span(o, l, i - 1, j + 1) +
-                                conv2_weight_span(l, k, 1, 0) *
+                                conv2_weight_span(k, l, 1, 0) *
                                     c_feature_padded_span(o, l, i + 0, j - 1) +
-                                conv2_weight_span(l, k, 1, 1) *
+                                conv2_weight_span(k, l, 1, 1) *
                                     c_feature_padded_span(o, l, i + 0, j + 0) +
-                                conv2_weight_span(l, k, 1, 2) *
+                                conv2_weight_span(k, l, 1, 2) *
                                     c_feature_padded_span(o, l, i + 0, j + 1) +
-                                conv2_weight_span(l, k, 2, 0) *
+                                conv2_weight_span(k, l, 2, 0) *
                                     c_feature_padded_span(o, l, i + 1, j - 1) +
-                                conv2_weight_span(l, k, 2, 1) *
+                                conv2_weight_span(k, l, 2, 1) *
                                     c_feature_padded_span(o, l, i + 1, j + 0) +
-                                conv2_weight_span(l, k, 2, 2) *
-                                    c_feature_padded_span(o, l, i + 1, j + 1) +
-                                conv2_bias_span(l, 0);
+                                conv2_weight_span(k, l, 2, 2) *
+                                    c_feature_padded_span(o, l, i + 1, j + 1);
                         }
+                        value += conv2_bias[k];
                         // apply activation function (relu)
                         if (value < 0.) {
                             value = 0.;
@@ -667,71 +659,63 @@ void run_inference_boost_multi(std::string filename) {
             }
         }
 
-        std::cout << conv2_output_span(0, multi::_, multi::_, multi::_)
-                  << std::endl;
-
-        if (batch_index == 0) {  // compare to python result
-            assert(conv2_output_span[0][0][0][0] < 0.4063);
-            assert(conv2_output_span[0][0][0][0] > 0.4062);
-        }
-
         // apply max pooling
         dalotia::vector<float> conv2_output_pooled(num_images_in_batch * 16 *
                                                    7 * 7);
         auto conv2_output_pooled_span = span_4d_float(
             {inum_images_in_batch, 16, 7, 7}, conv2_output_pooled.data());
 #pragma omp parallel for
-        for (int o = 0; o < num_images_in_batch; ++o) {
+        for (int o = 0; o < inum_images_in_batch; ++o) {
             for (int i = 0; i < 7; ++i) {
                 for (int j = 0; j < 7; ++j) {
                     for (int k = 0; k < 16; ++k) {
-                        auto window = conv2_output_span(
-                            o, k, {2 * i, 2 * i + 1}, {2 * j, 2 * j + 1});
-                        auto max_val = (*std::max_element(window.begin(),
-                                                          window.end()))[0];
-                        conv2_output_pooled_span(o, k, i, j) = max_val;
+                        float mv = 0;
+                        for (int m = 0; m < 2; ++m)
+                            for (int n = 0; n < 2; ++n)
+                                mv = std::max(mv, conv2_output_span(o, k, 2*i+m, 2*j+n));
+                        conv2_output_pooled_span(o, k, i, j) = mv;
                     }
                 }
             }
         }
 
         // apply dense layer
+        // fc1_output = conv2_flat @ fc1_weight^T + fc1_bias
         dalotia::vector<float> fc1_output(num_images_in_batch * 10);
         auto fc1_output_span =
             span_2d_float({inum_images_in_batch, 10}, fc1_output.data());
         auto conv2_output_flattened = span_2d_float(
             {inum_images_in_batch, 16 * 7 * 7}, conv2_output_pooled.data());
-        // fc1_output_span = multi::blas::gemm(1., conv2_output_flattened,
-        // //TODO use one of them!
-        //                                     fc1_weight_span.transposed());
-        // using multi::operator+=; // doesn't work yet? ->
-        // https://github.com/correaa/boost-multi/blob/master/include/boost/multi/adaptors/blas/README.md
-        // footnote 3
-        // std::transform(fc1_bias_span.begin(), fc1_bias_span.end(),
-        //                // appears to not work
-        //                fc1_output_span.begin(), fc1_output_span.begin(),
-        //                [](auto ex, auto ey) {
-        //                    return ex[0] + ey[0];
-        //                });  // this would also be nicer without the [0]
-        //                indexing
 
-        // {
-        //     using namespace tblis::indices;
-        //     tblis::mult(fc1_weight_span(a, b), conv2_output_flattened(o,
-        //     b),
-        //                 fc1_output(o, a));
-        // }
-
-        std::transform(fc1_bias.begin(), fc1_bias.end(), fc1_output.begin(),
-                       fc1_output.begin(),
-                       [](auto ex, auto ey) { return ex + ey; });
-
-        // output first image's result
-        std::cout << "output for first image: ";
-        for (int i = 0; i < 10; ++i) {
-            std::cout << fc1_output_span[i][0] << " ";
+        // fill with bias
+        for (int o = 0; o < inum_images_in_batch; ++o) {
+            for (int k = 0; k < 10; ++k) {
+                fc1_output_span(o, k) = fc1_bias[k];
+            }
         }
+        // gemm: C = alpha * A @ B^T + beta * C
+        multi::blas::gemm(1.f, conv2_output_flattened,
+                          fc1_weight_span.transposed(),
+                          1.f, fc1_output_span);
+
+        // argmax per image -> results
+        for (size_t o = 0; o < num_images_in_batch; ++o) {
+            auto result = std::max_element(fc1_output.begin() + o * 10,
+                                           fc1_output.begin() + (o + 1) * 10) -
+                          (fc1_output.begin() + o * 10);
+            results[batch_index * batch_size + o] = result;
+        }
+
+#ifndef NDEBUG
+        if (batch_index == 0) {
+            assert_close(conv2_output_pooled[0], 0.40625, 1e-5);
+            assert_close(fc1_output[0], -80.9247);
+            assert_close(fc1_output[7], 38.1572);
+        }
+#endif
     }
+    const auto end = std::chrono::high_resolution_clock::now();
+    return end - start;
 }
 #endif  // DALOTIA_E_WITH_BOOST_MULTI
 
