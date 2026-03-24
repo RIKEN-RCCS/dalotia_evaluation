@@ -30,6 +30,11 @@ jobs:
         build-args: --config ${{ matrix.build_type }}
         # cxx-compiler: ${{ matrix.compiler }}
         build-dir: build-${{ matrix.build_type }}
+    - name: Run GPT-2 smoke test
+      if: matrix.build_type == 'Release'
+      run: |
+        cd build-${{ matrix.build_type }}/benchmarks/GPT2
+        ./gpt2_cpp ./model.safetensors 1
 
   build-cublas:
     name: Build with cuBLAS (compile-only)
