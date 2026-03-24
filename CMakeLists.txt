@@ -214,7 +214,7 @@ if (DALOTIA_E_WITH_BOOST_MULTI)
   FetchContent_Declare(
     multi
     GIT_REPOSITORY https://github.com/correaa/boost-multi.git
-    GIT_TAG f549688718345435aabaa1ac49c392965ca082a5
+    GIT_TAG 25b1c990031ae501600410a9d1b24f5f5f36ed75
     FIND_PACKAGE_ARGS #MULTI_BUILD_TESTS?
   )
   FetchContent_MakeAvailable(multi)
