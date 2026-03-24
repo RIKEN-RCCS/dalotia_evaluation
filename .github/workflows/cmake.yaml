@@ -16,13 +16,12 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4.2.0
     # https://github.com/actions/checkout/issues/462#issuecomment-1697584038
-    - name: Configure CMake
+    - name: Patch CMakeLists for PAT access
       env:
         GH_PAT: ${{ secrets.READ_TOKEN }}
       run: |
         # Need a little regex here so we can download repo with PAT
         sed -i 's|git@github.com:|https://$ENV\{GH_PAT\}@github.com/|g' CMakeLists.txt
-        cmake -S . -B build
     - name: Configure and Build Project
       uses: threeal/cmake-action@v1.3.0
       with:
@@ -56,12 +55,11 @@ jobs:
         non-cuda-sub-packages: '["libcufile-dev", "libcublas-dev"]'
 
     # https://github.com/actions/checkout/issues/462#issuecomment-1697584038
-    - name: Configure CMake (fetch dalotia with cuFile)
+    - name: Patch CMakeLists for PAT access
       env:
         GH_PAT: ${{ secrets.READ_TOKEN }}
       run: |
         sed -i 's|git@github.com:|https://$ENV\{GH_PAT\}@github.com/|g' CMakeLists.txt
-        cmake -S . -B build-cublas
 
     - name: Configure and Build with cuBLAS
       uses: threeal/cmake-action@v1.3.0
