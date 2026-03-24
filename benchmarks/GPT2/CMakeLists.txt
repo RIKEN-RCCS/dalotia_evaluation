@@ -6,13 +6,14 @@ set(GPT2_MODEL_FILE "${CMAKE_CURRENT_BINARY_DIR}/model.safetensors")
 
 if(NOT EXISTS ${GPT2_MODEL_FILE})
     message(STATUS "Downloading GPT-2 model.safetensors from HuggingFace...")
-    FetchContent_Declare(
-        gpt2_model
-        URL ${GPT2_MODEL_URL}
-        DOWNLOAD_NO_EXTRACT true
-    )
-    if(NOT gpt2_model_POPULATED)
-        FetchContent_MakeAvailable(gpt2_model)
+    file(DOWNLOAD ${GPT2_MODEL_URL} ${GPT2_MODEL_FILE}
+         SHOW_PROGRESS
+         STATUS GPT2_DOWNLOAD_STATUS)
+    list(GET GPT2_DOWNLOAD_STATUS 0 GPT2_DOWNLOAD_ERROR)
+    if(NOT GPT2_DOWNLOAD_ERROR EQUAL 0)
+        list(GET GPT2_DOWNLOAD_STATUS 1 GPT2_DOWNLOAD_MSG)
+        file(REMOVE ${GPT2_MODEL_FILE})
+        message(WARNING "GPT-2 model download failed: ${GPT2_DOWNLOAD_MSG}")
     endif()
     file(COPY "${gpt2_model_SOURCE_DIR}/model.safetensors"
          DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
