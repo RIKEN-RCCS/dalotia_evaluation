@@ -16,29 +16,19 @@
 #ifdef DALOTIA_WITH_CUFILE
 #include "dalotia_cufile.hpp"
 #endif
+#ifdef DALOTIA_WITH_CUDA
+#include "dalotia_cuda.hpp"
+#endif
 
-struct CudaDeleter {
-    void operator()(void *p) const noexcept { if (p) cudaFree(p); }
-};
-using CudaPtr = std::unique_ptr<void, CudaDeleter>;
-
-// Typed convenience: returns a CudaPtr, provides a raw T* via .get()
+// Typed convenience wrapper around dalotia::CudaBuffer.
 template <typename T>
-struct CudaBuffer {
-    CudaPtr ptr;
+struct TypedCudaBuffer {
+    dalotia::CudaBuffer buf;
     size_t count;
 
-    CudaBuffer(size_t n) : count(n) {
-        void *raw = nullptr;
-        cudaError_t err = cudaMalloc(&raw, n * sizeof(T));
-        if (err != cudaSuccess) {
-            throw std::runtime_error(
-                std::string("cudaMalloc failed: ") + cudaGetErrorString(err));
-        }
-        ptr.reset(raw);
-    }
+    explicit TypedCudaBuffer(size_t n) : buf(n * sizeof(T)), count(n) {}
 
-    T *get() const noexcept { return static_cast<T *>(ptr.get()); }
+    T *get() const noexcept { return const_cast<T *>(buf.as<T>()); }
     size_t bytes() const noexcept { return count * sizeof(T); }
 };
 
@@ -149,10 +139,10 @@ int main(int argc, char *argv[]) {
     // ── Load model weights to GPU ────────────────────────────────────────
     std::string weights_file = "./weights_SubgridLESNet.safetensors";
 
-    CudaBuffer<float> d_weights_1(num_hidden_neurons * num_input_features);
-    CudaBuffer<float> d_biases_1(num_hidden_neurons);
-    CudaBuffer<float> d_weights_2(num_output_features * num_hidden_neurons);
-    CudaBuffer<float> d_biases_2(num_output_features);
+    TypedCudaBuffer<float> d_weights_1(num_hidden_neurons * num_input_features);
+    TypedCudaBuffer<float> d_biases_1(num_hidden_neurons);
+    TypedCudaBuffer<float> d_weights_2(num_output_features * num_hidden_neurons);
+    TypedCudaBuffer<float> d_biases_2(num_output_features);
 
     std::cout << "Loading weights with GPU Direct Storage" << std::endl;
     dalotia::CuFileDriver gds_driver;
@@ -168,9 +158,9 @@ int main(int argc, char *argv[]) {
         dalotia_C_ordering, reinterpret_cast<dalotia_byte *>(d_biases_2.get()));
 
     // ── Allocate inference buffers ───────────────────────────────────────
-    CudaBuffer<float> d_input(num_inputs * num_input_features);
-    CudaBuffer<float> d_hidden(num_inputs * num_hidden_neurons);
-    CudaBuffer<float> d_output(num_inputs * num_output_features);
+    TypedCudaBuffer<float> d_input(num_inputs * num_input_features);
+    TypedCudaBuffer<float> d_hidden(num_inputs * num_hidden_neurons);
+    TypedCudaBuffer<float> d_output(num_inputs * num_output_features);
 
     CHECK_CUDA(cudaMemcpy(d_input.get(), input_tensor.data(),
                           d_input.bytes(), cudaMemcpyHostToDevice));
