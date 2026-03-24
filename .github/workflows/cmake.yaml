@@ -29,6 +29,7 @@ jobs:
         build-args: --config ${{ matrix.build_type }}
         # cxx-compiler: ${{ matrix.compiler }}
         build-dir: build-${{ matrix.build_type }}
+        options: DALOTIA_E_WITH_BOOST_MULTI=ON
     - name: Run GPT-2 smoke test
       if: matrix.build_type == 'Release'
       run: |
@@ -65,5 +66,5 @@ jobs:
       uses: threeal/cmake-action@v1.3.0
       with:
         run-build: true
-        options: DALOTIA_E_WITH_CUBLAS=ON DALOTIA_E_WITH_FORTRAN=OFF DALOTIA_E_WITH_CACHEFLUSH=OFF
+        options: DALOTIA_E_WITH_CUBLAS=ON DALOTIA_E_WITH_BOOST_MULTI=ON DALOTIA_E_WITH_FORTRAN=OFF DALOTIA_E_WITH_CACHEFLUSH=OFF
         build-dir: build-cublas

@@ -1,5 +1,6 @@
 # GPT-2 124M inference benchmark
 # Downloads model.safetensors from HuggingFace at configure time
+# Requires DALOTIA_E_WITH_BOOST_MULTI=ON
 
 set(GPT2_MODEL_URL "https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors")
 set(GPT2_MODEL_FILE "${CMAKE_CURRENT_BINARY_DIR}/model.safetensors")
@@ -15,24 +16,24 @@ if(NOT EXISTS ${GPT2_MODEL_FILE})
         file(REMOVE ${GPT2_MODEL_FILE})
         message(WARNING "GPT-2 model download failed: ${GPT2_DOWNLOAD_MSG}")
     endif()
-    file(COPY "${gpt2_model_SOURCE_DIR}/model.safetensors"
-         DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+endif()
+
+if (NOT DALOTIA_E_WITH_BOOST_MULTI)
+    message(STATUS "GPT2: skipping gpt2_cpp (requires DALOTIA_E_WITH_BOOST_MULTI=ON)")
+    return()
 endif()
 
 add_executable(gpt2_cpp gpt2.cpp)
-target_link_libraries(gpt2_cpp PUBLIC dalotia::dalotia_cpp)
-target_include_directories(gpt2_cpp PUBLIC ${BLAS_INCLUDE_DIRS})
-target_link_libraries(gpt2_cpp PRIVATE BLAS::BLAS)
+target_link_libraries(gpt2_cpp PUBLIC dalotia::dalotia_cpp multi)
 
 if (OpenMP_CXX_FOUND)
     target_link_libraries(gpt2_cpp PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
-if (DALOTIA_E_WITH_BOOST_MULTI)
-    target_compile_options(gpt2_cpp PUBLIC "-DDALOTIA_E_WITH_BOOST_MULTI")
-    target_include_directories(gpt2_cpp PUBLIC ${MULTI_CPP_INCLUDE_DIR} ${MULTI_DIR})
-    add_dependencies(gpt2_cpp multi)
-endif(DALOTIA_E_WITH_BOOST_MULTI)
+# Boost.Multi links BLAS internally; add include dirs for dalotia headers
+if (BLAS_INCLUDE_DIRS)
+    target_include_directories(gpt2_cpp PUBLIC ${BLAS_INCLUDE_DIRS})
+endif()
 
 if (DALOTIA_E_WITH_CUBLAS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/gpt2_cublas.cu")
     add_executable(gpt2_cublas gpt2_cublas.cu)

@@ -1,6 +1,7 @@
-// GPT-2 124M inference benchmark using dalotia + CBLAS
+// GPT-2 124M inference benchmark using dalotia + Boost.Multi
 // Loads weights from safetensors, runs a single forward pass, reports timings.
 //
+// Boost.Multi dispatches to cblas or cublas based on the allocator used.
 // GPT-2 uses Conv1D-style weights (transposed): matmul is x @ W, not W @ x.
 // Weight shapes: c_attn.weight [768, 2304], c_fc.weight [768, 3072], etc.
 
@@ -18,7 +19,13 @@
 #include "dalotia.hpp"
 #include "dalotia_safetensors_file.hpp"
 
-#include "cblas.h"
+#include <boost/multi/array.hpp>
+#include <boost/multi/adaptors/blas.hpp>
+
+namespace multi = boost::multi;
+
+using mat_ref = multi::array_ref<float, 2>;
+using const_mat_ref = multi::array_ref<float const, 2>;
 
 // ── GPT-2 124M hyperparameters ──────────────────────────────────────────
 constexpr int N_LAYER = 12;
@@ -29,20 +36,6 @@ constexpr int VOCAB_SIZE = 50257;
 constexpr int HEAD_DIM = N_EMBD / N_HEAD;  // 64
 constexpr int FFN_DIM = 4 * N_EMBD;        // 3072
 
-// ── Utility types ───────────────────────────────────────────────────────
-
-// A non-owning 2D view into contiguous float memory (row-major).
-struct Mat {
-    float* data;
-    int rows, cols;
-
-    Mat(float* d, int r, int c) : data(d), rows(r), cols(c) {}
-    float& operator()(int i, int j) { return data[i * cols + j]; }
-    const float& operator()(int i, int j) const { return data[i * cols + j]; }
-    float* row(int i) { return data + i * cols; }
-    const float* row(int i) const { return data + i * cols; }
-};
-
 // ── Element-wise operations ─────────────────────────────────────────────
 
 // LayerNorm: x = (x - mean) / sqrt(var + eps) * weight + bias
@@ -51,11 +44,9 @@ void layer_norm(float* x, int seq_len, int dim,
                 const float* weight, const float* bias, float eps = 1e-5f) {
     for (int s = 0; s < seq_len; ++s) {
         float* row = x + s * dim;
-        // mean
         float mean = 0.0f;
         for (int i = 0; i < dim; ++i) mean += row[i];
         mean /= dim;
-        // variance
         float var = 0.0f;
         for (int i = 0; i < dim; ++i) {
             float d = row[i] - mean;
@@ -63,7 +54,6 @@ void layer_norm(float* x, int seq_len, int dim,
         }
         var /= dim;
         float inv_std = 1.0f / std::sqrt(var + eps);
-        // normalize + affine
         for (int i = 0; i < dim; ++i) {
             row[i] = (row[i] - mean) * inv_std * weight[i] + bias[i];
         }
@@ -73,7 +63,7 @@ void layer_norm(float* x, int seq_len, int dim,
 // GELU (approximate, "gelu_new" used by GPT-2):
 //   0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
 void gelu_inplace(float* x, int n) {
-    constexpr float sqrt_2_over_pi = 0.7978845608028654f;  // sqrt(2/pi)
+    constexpr float sqrt_2_over_pi = 0.7978845608028654f;
     for (int i = 0; i < n; ++i) {
         float v = x[i];
         float cube = v * v * v;
@@ -82,8 +72,7 @@ void gelu_inplace(float* x, int n) {
     }
 }
 
-// Softmax along last axis of a[seq_len, seq_len] for each head.
-// Applied in-place to attn_scores[n_head, seq_len, seq_len].
+// Softmax in-place along last axis.
 void softmax_rows_inplace(float* data, int rows, int cols) {
     for (int r = 0; r < rows; ++r) {
         float* row = data + r * cols;
@@ -111,28 +100,6 @@ void apply_causal_mask(float* attn, int n_head, int seq_len) {
     }
 }
 
-// ── BLAS wrappers ───────────────────────────────────────────────────────
-
-// C = A @ B  where A is [M, K], B is [K, N], C is [M, N] (row-major).
-// GPT-2 Conv1D: x @ weight, so A=x, B=weight.
-void matmul(const float* A, const float* B, float* C,
-            int M, int K, int N) {
-    // cblas row-major: C = alpha * A * B + beta * C
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                M, N, K,
-                1.0f, A, K, B, N,
-                0.0f, C, N);
-}
-
-// C = A @ B^T  where A is [M, K], B is [N, K], C is [M, N].
-void matmul_transB(const float* A, const float* B, float* C,
-                   int M, int K, int N) {
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                M, N, K,
-                1.0f, A, K, B, K,
-                0.0f, C, N);
-}
-
 // Add bias to each row: x[i, :] += bias[:] for i in [0, rows).
 void add_bias(float* x, const float* bias, int rows, int cols) {
     for (int i = 0; i < rows; ++i) {
@@ -145,27 +112,18 @@ void add_bias(float* x, const float* bias, int rows, int cols) {
 // ── Model weights ───────────────────────────────────────────────────────
 
 struct TransformerBlock {
-    // Pre-attention LayerNorm
     dalotia::vector<float> ln_1_weight, ln_1_bias;
-    // Fused QKV projection (Conv1D: [768, 2304])
-    dalotia::vector<float> c_attn_weight, c_attn_bias;
-    // Attention output projection (Conv1D: [768, 768])
-    dalotia::vector<float> c_proj_weight, c_proj_bias;
-    // Pre-FFN LayerNorm
+    dalotia::vector<float> c_attn_weight, c_attn_bias;       // [768, 2304]
+    dalotia::vector<float> c_proj_weight, c_proj_bias;        // [768, 768]
     dalotia::vector<float> ln_2_weight, ln_2_bias;
-    // FFN up (Conv1D: [768, 3072])
-    dalotia::vector<float> c_fc_weight, c_fc_bias;
-    // FFN down (Conv1D: [3072, 768])
-    dalotia::vector<float> c_proj_mlp_weight, c_proj_mlp_bias;
+    dalotia::vector<float> c_fc_weight, c_fc_bias;            // [768, 3072]
+    dalotia::vector<float> c_proj_mlp_weight, c_proj_mlp_bias; // [3072, 768]
 };
 
 struct GPT2Model {
-    // Embeddings
     dalotia::vector<float> wte;  // [50257, 768]
     dalotia::vector<float> wpe;  // [1024, 768]
-    // Transformer blocks
     std::vector<TransformerBlock> blocks;
-    // Final LayerNorm
     dalotia::vector<float> ln_f_weight, ln_f_bias;
 };
 
@@ -175,7 +133,6 @@ GPT2Model load_model(const std::string& filename) {
 
     GPT2Model model;
 
-    // Embeddings
     {
         auto [ext, data] = file->load_tensor_dense<float>("wte.weight", dalotia_float_32);
         assert(ext == std::vector<int>({VOCAB_SIZE, N_EMBD}));
@@ -187,7 +144,6 @@ GPT2Model load_model(const std::string& filename) {
         model.wpe = std::move(data);
     }
 
-    // Transformer blocks
     model.blocks.resize(N_LAYER);
     for (int i = 0; i < N_LAYER; ++i) {
         std::string prefix = "h." + std::to_string(i) + ".";
@@ -213,7 +169,6 @@ GPT2Model load_model(const std::string& filename) {
         blk.c_proj_mlp_bias = load("mlp.c_proj.bias");
     }
 
-    // Final LayerNorm
     {
         auto [ext, data] = file->load_tensor_dense<float>("ln_f.weight", dalotia_float_32);
         model.ln_f_weight = std::move(data);
@@ -228,7 +183,6 @@ GPT2Model load_model(const std::string& filename) {
 
 // ── Forward pass ────────────────────────────────────────────────────────
 
-// Run GPT-2 forward pass on token_ids[seq_len], returning logits[seq_len, VOCAB_SIZE].
 std::vector<float> forward(const GPT2Model& model,
                            const std::vector<int>& token_ids) {
     const int seq_len = static_cast<int>(token_ids.size());
@@ -249,8 +203,8 @@ std::vector<float> forward(const GPT2Model& model,
     std::vector<float> ln_out(seq_len * N_EMBD);
     std::vector<float> qkv(seq_len * 3 * N_EMBD);
     std::vector<float> attn_scores(N_HEAD * seq_len * seq_len);
-    std::vector<float> attn_out(seq_len * N_EMBD);     // after attention V multiplication
-    std::vector<float> proj_out(seq_len * N_EMBD);      // after c_proj
+    std::vector<float> attn_out(seq_len * N_EMBD);
+    std::vector<float> proj_out(seq_len * N_EMBD);
     std::vector<float> ffn_hidden(seq_len * FFN_DIM);
     std::vector<float> ffn_out(seq_len * N_EMBD);
 
@@ -263,17 +217,17 @@ std::vector<float> forward(const GPT2Model& model,
                    blk.ln_1_weight.data(), blk.ln_1_bias.data());
 
         // ── QKV projection: qkv = ln_out @ c_attn.weight + c_attn.bias
-        // ln_out [seq_len, 768] @ c_attn.weight [768, 2304] -> qkv [seq_len, 2304]
-        matmul(ln_out.data(), blk.c_attn_weight.data(), qkv.data(),
-               seq_len, N_EMBD, 3 * N_EMBD);
+        {
+            auto A = const_mat_ref({seq_len, N_EMBD}, ln_out.data());
+            auto B = const_mat_ref({N_EMBD, 3 * N_EMBD}, blk.c_attn_weight.data());
+            auto C = mat_ref({seq_len, 3 * N_EMBD}, qkv.data());
+            multi::blas::gemm(1.0f, A, B, 0.0f, C);
+        }
         add_bias(qkv.data(), blk.c_attn_bias.data(), seq_len, 3 * N_EMBD);
 
         // ── Split Q, K, V and reshape for multi-head attention ──────
-        // qkv is [seq_len, 3*N_EMBD], laid out as [seq_len, 3, N_HEAD, HEAD_DIM]
-        // We need Q, K, V each as [N_HEAD, seq_len, HEAD_DIM].
-        // Rearrange in scratch buffers.
         // Q = qkv[:, 0:768], K = qkv[:, 768:1536], V = qkv[:, 1536:2304]
-        // Then reshape [seq_len, N_HEAD, HEAD_DIM] -> [N_HEAD, seq_len, HEAD_DIM]
+        // Reshape [seq_len, N_HEAD, HEAD_DIM] -> [N_HEAD, seq_len, HEAD_DIM]
         std::vector<float> Q(N_HEAD * seq_len * HEAD_DIM);
         std::vector<float> K(N_HEAD * seq_len * HEAD_DIM);
         std::vector<float> V(N_HEAD * seq_len * HEAD_DIM);
@@ -293,22 +247,20 @@ std::vector<float> forward(const GPT2Model& model,
         }
 
         // ── Attention scores: Q @ K^T / sqrt(HEAD_DIM) ─────────────
-        // For each head h: scores[h] = Q[h] @ K[h]^T, shape [seq_len, seq_len]
         float scale = 1.0f / std::sqrt(static_cast<float>(HEAD_DIM));
         for (int h = 0; h < N_HEAD; ++h) {
-            const float* Qh = Q.data() + h * seq_len * HEAD_DIM;
-            const float* Kh = K.data() + h * seq_len * HEAD_DIM;
-            float* Sh = attn_scores.data() + h * seq_len * seq_len;
-            // Sh = Qh @ Kh^T
-            matmul_transB(Qh, Kh, Sh, seq_len, HEAD_DIM, seq_len);
-            // scale
-            int n = seq_len * seq_len;
-            for (int i = 0; i < n; ++i) Sh[i] *= scale;
+            auto Qh = const_mat_ref({seq_len, HEAD_DIM},
+                                    Q.data() + h * seq_len * HEAD_DIM);
+            auto Kh = const_mat_ref({seq_len, HEAD_DIM},
+                                    K.data() + h * seq_len * HEAD_DIM);
+            auto Sh = mat_ref({seq_len, seq_len},
+                              attn_scores.data() + h * seq_len * seq_len);
+            // Sh = scale * Qh @ Kh^T
+            multi::blas::gemm(scale, Qh, Kh.transposed(), 0.0f, Sh);
         }
 
         // ── Causal mask + softmax ───────────────────────────────────
         apply_causal_mask(attn_scores.data(), N_HEAD, seq_len);
-        // Softmax each row for each head
         for (int h = 0; h < N_HEAD; ++h) {
             softmax_rows_inplace(
                 attn_scores.data() + h * seq_len * seq_len,
@@ -316,16 +268,17 @@ std::vector<float> forward(const GPT2Model& model,
         }
 
         // ── Attention output: attn_weights @ V ─────────────────────
-        // For each head: attn_out[h] = scores[h] @ V[h], [seq_len, HEAD_DIM]
         for (int h = 0; h < N_HEAD; ++h) {
-            const float* Sh = attn_scores.data() + h * seq_len * seq_len;
-            const float* Vh = V.data() + h * seq_len * HEAD_DIM;
-            float* Oh = attn_out.data() + h * seq_len * HEAD_DIM;
-            matmul(Sh, Vh, Oh, seq_len, seq_len, HEAD_DIM);
+            auto Sh = const_mat_ref({seq_len, seq_len},
+                                    attn_scores.data() + h * seq_len * seq_len);
+            auto Vh = const_mat_ref({seq_len, HEAD_DIM},
+                                    V.data() + h * seq_len * HEAD_DIM);
+            auto Oh = mat_ref({seq_len, HEAD_DIM},
+                              attn_out.data() + h * seq_len * HEAD_DIM);
+            multi::blas::gemm(1.0f, Sh, Vh, 0.0f, Oh);
         }
 
         // ── Reshape [N_HEAD, seq_len, HEAD_DIM] -> [seq_len, N_EMBD] ─
-        // and project: proj_out = reshaped @ c_proj.weight + c_proj.bias
         std::vector<float> attn_concat(seq_len * N_EMBD);
         for (int s = 0; s < seq_len; ++s) {
             for (int h = 0; h < N_HEAD; ++h) {
@@ -336,8 +289,13 @@ std::vector<float> forward(const GPT2Model& model,
             }
         }
 
-        matmul(attn_concat.data(), blk.c_proj_weight.data(), proj_out.data(),
-               seq_len, N_EMBD, N_EMBD);
+        // ── Attention output projection ─────────────────────────────
+        {
+            auto A = const_mat_ref({seq_len, N_EMBD}, attn_concat.data());
+            auto B = const_mat_ref({N_EMBD, N_EMBD}, blk.c_proj_weight.data());
+            auto C = mat_ref({seq_len, N_EMBD}, proj_out.data());
+            multi::blas::gemm(1.0f, A, B, 0.0f, C);
+        }
         add_bias(proj_out.data(), blk.c_proj_bias.data(), seq_len, N_EMBD);
 
         // ── Residual connection ─────────────────────────────────────
@@ -351,18 +309,24 @@ std::vector<float> forward(const GPT2Model& model,
                    blk.ln_2_weight.data(), blk.ln_2_bias.data());
 
         // ── FFN: up projection ──────────────────────────────────────
-        // ffn_hidden = ln_out @ c_fc.weight + c_fc.bias  -> [seq_len, 3072]
-        matmul(ln_out.data(), blk.c_fc_weight.data(), ffn_hidden.data(),
-               seq_len, N_EMBD, FFN_DIM);
+        {
+            auto A = const_mat_ref({seq_len, N_EMBD}, ln_out.data());
+            auto B = const_mat_ref({N_EMBD, FFN_DIM}, blk.c_fc_weight.data());
+            auto C = mat_ref({seq_len, FFN_DIM}, ffn_hidden.data());
+            multi::blas::gemm(1.0f, A, B, 0.0f, C);
+        }
         add_bias(ffn_hidden.data(), blk.c_fc_bias.data(), seq_len, FFN_DIM);
 
         // ── GELU activation ─────────────────────────────────────────
         gelu_inplace(ffn_hidden.data(), seq_len * FFN_DIM);
 
         // ── FFN: down projection ────────────────────────────────────
-        // ffn_out = ffn_hidden @ c_proj.weight + c_proj.bias  -> [seq_len, 768]
-        matmul(ffn_hidden.data(), blk.c_proj_mlp_weight.data(), ffn_out.data(),
-               seq_len, FFN_DIM, N_EMBD);
+        {
+            auto A = const_mat_ref({seq_len, FFN_DIM}, ffn_hidden.data());
+            auto B = const_mat_ref({FFN_DIM, N_EMBD}, blk.c_proj_mlp_weight.data());
+            auto C = mat_ref({seq_len, N_EMBD}, ffn_out.data());
+            multi::blas::gemm(1.0f, A, B, 0.0f, C);
+        }
         add_bias(ffn_out.data(), blk.c_proj_mlp_bias.data(), seq_len, N_EMBD);
 
         // ── Residual connection ─────────────────────────────────────
@@ -376,10 +340,13 @@ std::vector<float> forward(const GPT2Model& model,
                model.ln_f_weight.data(), model.ln_f_bias.data());
 
     // ── Logits: x @ wte^T (tied embeddings) ────────────────────────────
-    // x [seq_len, 768] @ wte^T [768, 50257] -> logits [seq_len, 50257]
     std::vector<float> logits(seq_len * VOCAB_SIZE);
-    matmul_transB(x.data(), model.wte.data(), logits.data(),
-                  seq_len, N_EMBD, VOCAB_SIZE);
+    {
+        auto A = const_mat_ref({seq_len, N_EMBD}, x.data());
+        auto B = const_mat_ref({VOCAB_SIZE, N_EMBD}, model.wte.data());
+        auto C = mat_ref({seq_len, VOCAB_SIZE}, logits.data());
+        multi::blas::gemm(1.0f, A, B.transposed(), 0.0f, C);
+    }
 
     return logits;
 }
@@ -419,7 +386,6 @@ int main(int argc, char* argv[]) {
     auto t_infer_start = std::chrono::high_resolution_clock::now();
     for (int step = 0; step < num_generate; ++step) {
         std::vector<float> logits = forward(model, tokens);
-        // Take logits for the last position
         const float* last_logits = logits.data() + (tokens.size() - 1) * VOCAB_SIZE;
         int next_token = argmax(last_logits, VOCAB_SIZE);
         tokens.push_back(next_token);
@@ -440,7 +406,6 @@ int main(int argc, char* argv[]) {
     std::cout << "]" << std::endl;
 
     // ── Basic sanity check ──────────────────────────────────────────────
-    // Run a single forward pass on prompt and check logits are finite
     {
         std::vector<float> logits = forward(model, prompt_tokens);
         bool all_finite = true;
