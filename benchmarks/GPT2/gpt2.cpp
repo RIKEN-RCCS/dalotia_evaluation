@@ -374,16 +374,10 @@ GPT2Model load_model(const std::string& filename) {
 }
 
 // ── Forward pass ────────────────────────────────────────────────────────
-// GPU: CUDA kernels + cuBLAS gemm on default stream.
-//      cudaDeviceSynchronize between kernels and gemm calls for managed
-//      memory coherence.
+// GPU: all ops on default stream 0 — implicitly ordered, no inter-op sync.
+//      Single cudaDeviceSynchronize at entry (managed memory coherence)
+//      and cudaStreamSynchronize at exit (before host reads logits).
 // CPU: sequential host ops.
-
-inline void sync_device() {
-#ifdef DALOTIA_E_WITH_CUBLAS
-    CHECK_CUDA(cudaDeviceSynchronize());
-#endif
-}
 
 std::vector<float> forward(const GPT2Model& model,
                            const std::vector<int>& token_ids) {
@@ -440,7 +434,7 @@ std::vector<float> forward(const GPT2Model& model,
         layer_norm(ln_out.data(), S, N_EMBD, blk.ln_1_weight.data(), blk.ln_1_bias.data());
 
         // QKV projection (cuBLAS/cblas)
-        sync_device();
+
         {
             auto A = const_mat_ref(make_cfptr(ln_out.data()), {S, N_EMBD});
             auto B = const_mat_ref(make_cfptr(blk.c_attn_weight.data()), {N_EMBD, 3*N_EMBD});
@@ -466,7 +460,7 @@ std::vector<float> forward(const GPT2Model& model,
 #endif
 
         // Attention scores: Q @ K^T / sqrt(HEAD_DIM)
-        sync_device();
+
         float scale = 1.0f / std::sqrt(static_cast<float>(HEAD_DIM));
         for (int h = 0; h < N_HEAD; ++h) {
             auto Qh = const_mat_ref(make_cfptr(Q.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
@@ -480,7 +474,7 @@ std::vector<float> forward(const GPT2Model& model,
         softmax_rows_inplace(attn_scores.data(), N_HEAD * S, S);
 
         // Attention output: scores @ V
-        sync_device();
+
         for (int h = 0; h < N_HEAD; ++h) {
             auto Sh = const_mat_ref(make_cfptr(attn_scores.data()+h*S*S), {S, S});
             auto Vh = const_mat_ref(make_cfptr(V.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
@@ -501,7 +495,7 @@ std::vector<float> forward(const GPT2Model& model,
 #endif
 
         // Output projection + residual
-        sync_device();  // ensure concat_heads kernel output visible
+
         {
             auto A = const_mat_ref(make_cfptr(attn_concat.data()), {S, N_EMBD});
             auto B = const_mat_ref(make_cfptr(blk.c_proj_weight.data()), {N_EMBD, N_EMBD});
@@ -526,7 +520,7 @@ std::vector<float> forward(const GPT2Model& model,
         layer_norm(ln_out.data(), S, N_EMBD, blk.ln_2_weight.data(), blk.ln_2_bias.data());
 
         // FFN up + GELU
-        sync_device();  // ensure LayerNorm kernel output visible
+
         {
             auto A = const_mat_ref(make_cfptr(ln_out.data()), {S, N_EMBD});
             auto B = const_mat_ref(make_cfptr(blk.c_fc_weight.data()), {N_EMBD, FFN_DIM});
@@ -537,7 +531,7 @@ std::vector<float> forward(const GPT2Model& model,
         gelu_inplace(ffn_hidden.data(), S * FFN_DIM);
 
         // FFN down + residual
-        sync_device();  // ensure GELU kernel output visible
+
         {
             auto A = const_mat_ref(make_cfptr(ffn_hidden.data()), {S, FFN_DIM});
             auto B = const_mat_ref(make_cfptr(blk.c_proj_mlp_weight.data()), {FFN_DIM, N_EMBD});
@@ -558,7 +552,7 @@ std::vector<float> forward(const GPT2Model& model,
     layer_norm(x.data(), S, N_EMBD, model.ln_f_weight.data(), model.ln_f_bias.data());
 
     // Logits: x @ wte^T
-    sync_device();  // ensure final LayerNorm visible
+
     auto logits_buf = make_buffer(S * VOCAB_SIZE, smr);
     {
         auto A = const_mat_ref(make_cfptr(x.data()), {S, N_EMBD});
@@ -598,10 +592,12 @@ int main(int argc, char* argv[]) {
 #ifdef DALOTIA_E_WITH_CUBLAS
     CHECK_CUDA(cudaFree(nullptr));  // force CUDA init
 
-    // With managed memory, cuBLAS needs to sync after each call so that
-    // subsequent GPU kernels see consistent data. The context defaults to
-    // sync_after_call=true, which is correct for managed memory.
     inference_stream = 0;
+
+    // All GPU ops (kernels + cuBLAS) run on the default stream (stream 0),
+    // so they are implicitly ordered. Disable cuBLAS per-call sync.
+    auto& ctx = multi::cuda::cublas::context::get_instance();
+    ctx.set_sync(false);
 
     std::cout << "Loading GPT-2 124M (GPU/cuBLAS) from "
               << model_path << " ..." << std::endl;
