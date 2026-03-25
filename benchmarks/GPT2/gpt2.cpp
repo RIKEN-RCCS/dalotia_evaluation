@@ -36,6 +36,9 @@
 #endif
 
 namespace multi = boost::multi;
+// NOTE: multi::blas::operators::operator* and operator+= exist for gemm/axpy
+// but require matching element types (no const_mat_ref * const_mat_ref → mat_ref).
+// Using explicit multi::blas::gemm/axpy calls instead for const-correctness.
 
 // ── Pointer-type abstraction ────────────────────────────────────────────
 #ifdef DALOTIA_E_WITH_CUBLAS
@@ -427,23 +430,33 @@ std::vector<float> forward(const GPT2Model& model,
     }
 #endif
 
+    // 2D views over flat buffers — these are the "matrices" for Boost.Multi
+    auto X       = mat_ref(make_fptr(x.data()),           {S, N_EMBD});
+    auto LN      = mat_ref(make_fptr(ln_out.data()),      {S, N_EMBD});
+    auto QKV     = mat_ref(make_fptr(qkv.data()),         {S, 3*N_EMBD});
+    auto Proj     = mat_ref(make_fptr(proj_out.data()),    {S, N_EMBD});
+    auto FFN_H   = mat_ref(make_fptr(ffn_hidden.data()),  {S, FFN_DIM});
+    auto FFN_O   = mat_ref(make_fptr(ffn_out.data()),     {S, N_EMBD});
+    auto Concat  = mat_ref(make_fptr(attn_concat.data()), {S, N_EMBD});
+
     for (int layer = 0; layer < N_LAYER; ++layer) {
         const auto& blk = model.blocks[layer];
 
-        // Pre-attention LayerNorm (out-of-place: x → ln_out)
-        layer_norm(x.data(), ln_out.data(), S, N_EMBD, blk.ln_1_weight.data(), blk.ln_1_bias.data());
+        // Weight views (const, reused each layer)
+        auto W_attn = const_mat_ref(make_cfptr(blk.c_attn_weight.data()), {N_EMBD, 3*N_EMBD});
+        auto W_proj = const_mat_ref(make_cfptr(blk.c_proj_weight.data()), {N_EMBD, N_EMBD});
+        auto W_fc   = const_mat_ref(make_cfptr(blk.c_fc_weight.data()),   {N_EMBD, FFN_DIM});
+        auto W_fc_p = const_mat_ref(make_cfptr(blk.c_proj_mlp_weight.data()), {FFN_DIM, N_EMBD});
 
-        // QKV projection (cuBLAS/cblas)
+        // Pre-attention LayerNorm: LN = LayerNorm(X)
+        layer_norm(x.data(), ln_out.data(), S, N_EMBD,
+                   blk.ln_1_weight.data(), blk.ln_1_bias.data());
 
-        {
-            auto A = const_mat_ref(make_cfptr(ln_out.data()), {S, N_EMBD});
-            auto B = const_mat_ref(make_cfptr(blk.c_attn_weight.data()), {N_EMBD, 3*N_EMBD});
-            auto C = mat_ref(make_fptr(qkv.data()), {S, 3*N_EMBD});
-            multi::blas::gemm(1.0f, A, B, 0.0f, C);
-        }
+        // QKV = LN @ W_attn + bias
+        multi::blas::gemm(1.0f, LN, W_attn, 0.0f, QKV);
         add_bias(qkv.data(), blk.c_attn_bias.data(), S, 3*N_EMBD);
 
-        // Split Q,K,V
+        // Split Q,K,V and transpose to [N_HEAD, S, HEAD_DIM]
 #ifdef DALOTIA_E_WITH_CUBLAS
         split_qkv_kernel<<<grid(N_HEAD*S*HEAD_DIM), BLOCK, 0, inference_stream>>>(
             qkv.data(), Q.data(), K.data(), V.data(), S, N_HEAD, HEAD_DIM, N_EMBD);
@@ -459,30 +472,22 @@ std::vector<float> forward(const GPT2Model& model,
                 }
 #endif
 
-        // Attention scores: Q @ K^T / sqrt(HEAD_DIM)
-
+        // Per-head attention: scores = scale * Qh @ Kh^T, output = scores @ Vh
         float scale = 1.0f / std::sqrt(static_cast<float>(HEAD_DIM));
         for (int h = 0; h < N_HEAD; ++h) {
             auto Qh = const_mat_ref(make_cfptr(Q.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
             auto Kh = const_mat_ref(make_cfptr(K.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
-            auto Sh = mat_ref(make_fptr(attn_scores.data()+h*S*S), {S, S});
-            multi::blas::gemm(scale, Qh, Kh.transposed(), 0.0f, Sh);
-        }
-
-        // Causal mask + softmax
-        apply_causal_mask(attn_scores.data(), N_HEAD, S);
-        softmax_rows_inplace(attn_scores.data(), N_HEAD * S, S);
-
-        // Attention output: scores @ V
-
-        for (int h = 0; h < N_HEAD; ++h) {
-            auto Sh = const_mat_ref(make_cfptr(attn_scores.data()+h*S*S), {S, S});
             auto Vh = const_mat_ref(make_cfptr(V.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
+            auto Sh = mat_ref(make_fptr(attn_scores.data()+h*S*S), {S, S});
             auto Oh = mat_ref(make_fptr(attn_out.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
+
+            multi::blas::gemm(scale, Qh, Kh.transposed(), 0.0f, Sh);
+            apply_causal_mask(attn_scores.data()+h*S*S, 1, S);
+            softmax_rows_inplace(attn_scores.data()+h*S*S, S, S);
             multi::blas::gemm(1.0f, Sh, Vh, 0.0f, Oh);
         }
 
-        // Concat heads
+        // Concat heads: [N_HEAD, S, HEAD_DIM] → [S, N_EMBD]
 #ifdef DALOTIA_E_WITH_CUBLAS
         concat_heads_kernel<<<grid(S*N_EMBD), BLOCK, 0, inference_stream>>>(
             attn_concat.data(), attn_out.data(), S, N_HEAD, HEAD_DIM);
@@ -494,54 +499,34 @@ std::vector<float> forward(const GPT2Model& model,
                         attn_out.data()[h*S*HEAD_DIM + s*HEAD_DIM + d];
 #endif
 
-        // Output projection + residual
-
-        {
-            auto A = const_mat_ref(make_cfptr(attn_concat.data()), {S, N_EMBD});
-            auto B = const_mat_ref(make_cfptr(blk.c_proj_weight.data()), {N_EMBD, N_EMBD});
-            auto C = mat_ref(make_fptr(proj_out.data()), {S, N_EMBD});
-            multi::blas::gemm(1.0f, A, B, 0.0f, C);
-        }
+        // Output projection into Proj, add bias, then X += Proj
+        multi::blas::gemm(1.0f, Concat, W_proj, 0.0f, Proj);
         add_bias(proj_out.data(), blk.c_proj_bias.data(), S, N_EMBD);
         add_vecs(x.data(), proj_out.data(), S * N_EMBD);
 
-        // Pre-FFN LayerNorm (out-of-place: x → ln_out)
-        layer_norm(x.data(), ln_out.data(), S, N_EMBD, blk.ln_2_weight.data(), blk.ln_2_bias.data());
+        // Pre-FFN LayerNorm: LN = LayerNorm(X)
+        layer_norm(x.data(), ln_out.data(), S, N_EMBD,
+                   blk.ln_2_weight.data(), blk.ln_2_bias.data());
 
-        // FFN up + GELU
-
-        {
-            auto A = const_mat_ref(make_cfptr(ln_out.data()), {S, N_EMBD});
-            auto B = const_mat_ref(make_cfptr(blk.c_fc_weight.data()), {N_EMBD, FFN_DIM});
-            auto C = mat_ref(make_fptr(ffn_hidden.data()), {S, FFN_DIM});
-            multi::blas::gemm(1.0f, A, B, 0.0f, C);
-        }
+        // FFN: X += GELU(LN @ W_fc + bias) @ W_fc_proj + bias
+        multi::blas::gemm(1.0f, LN, W_fc, 0.0f, FFN_H);
         add_bias(ffn_hidden.data(), blk.c_fc_bias.data(), S, FFN_DIM);
         gelu_inplace(ffn_hidden.data(), S * FFN_DIM);
-
-        // FFN down + residual
-
-        {
-            auto A = const_mat_ref(make_cfptr(ffn_hidden.data()), {S, FFN_DIM});
-            auto B = const_mat_ref(make_cfptr(blk.c_proj_mlp_weight.data()), {FFN_DIM, N_EMBD});
-            auto C = mat_ref(make_fptr(ffn_out.data()), {S, N_EMBD});
-            multi::blas::gemm(1.0f, A, B, 0.0f, C);
-        }
+        multi::blas::gemm(1.0f, FFN_H, W_fc_p, 0.0f, FFN_O);
         add_bias(ffn_out.data(), blk.c_proj_mlp_bias.data(), S, N_EMBD);
         add_vecs(x.data(), ffn_out.data(), S * N_EMBD);
-
     }
 
-    // Final LayerNorm (out-of-place: x → ln_out)
-    layer_norm(x.data(), ln_out.data(), S, N_EMBD, model.ln_f_weight.data(), model.ln_f_bias.data());
+    // Final LayerNorm: LN = LayerNorm(X)
+    layer_norm(x.data(), ln_out.data(), S, N_EMBD,
+               model.ln_f_weight.data(), model.ln_f_bias.data());
 
-    // Logits: ln_out @ wte^T
+    // Logits = LN @ Wte^T
     auto logits_buf = make_buffer(S * VOCAB_SIZE, smr);
     {
-        auto A = const_mat_ref(make_cfptr(ln_out.data()), {S, N_EMBD});
-        auto B = const_mat_ref(make_cfptr(model.wte.data()), {VOCAB_SIZE, N_EMBD});
-        auto C = mat_ref(make_fptr(logits_buf.data()), {S, VOCAB_SIZE});
-        multi::blas::gemm(1.0f, A, B.transposed(), 0.0f, C);
+        auto Wte = const_mat_ref(make_cfptr(model.wte.data()), {VOCAB_SIZE, N_EMBD});
+        auto Logits = mat_ref(make_fptr(logits_buf.data()), {S, VOCAB_SIZE});
+        multi::blas::gemm(1.0f, LN, Wte.transposed(), 0.0f, Logits);
     }
 
     // Single sync point: copy logits to host
