@@ -131,24 +131,24 @@ __device__ float block_reduce_sum(float val) {
     return smem[0];
 }
 
-__global__ void layer_norm_kernel(float* x, int seq_len, int dim,
+// Out-of-place LayerNorm: reads from src, writes to dst.
+// Eliminates the need for a separate copy before in-place LayerNorm.
+__global__ void layer_norm_kernel(const float* src, float* dst, int seq_len, int dim,
                                   const float* weight, const float* bias, float eps) {
     int s = blockIdx.x; if (s >= seq_len) return;
-    float* row = x + s * dim;
+    const float* in  = src + s * dim;
+    float*       out = dst + s * dim;
 
-    // Mean
     float val = 0.0f;
-    for (int i = threadIdx.x; i < dim; i += blockDim.x) val += row[i];
+    for (int i = threadIdx.x; i < dim; i += blockDim.x) val += in[i];
     float mean = block_reduce_sum(val) / dim;
 
-    // Variance
     val = 0.0f;
-    for (int i = threadIdx.x; i < dim; i += blockDim.x) { float d = row[i]-mean; val += d*d; }
+    for (int i = threadIdx.x; i < dim; i += blockDim.x) { float d = in[i]-mean; val += d*d; }
     float inv_std = rsqrtf(block_reduce_sum(val) / dim + eps);
 
-    // Normalize + affine
     for (int i = threadIdx.x; i < dim; i += blockDim.x)
-        row[i] = (row[i] - mean) * inv_std * weight[i] + bias[i];
+        out[i] = (in[i] - mean) * inv_std * weight[i] + bias[i];
 }
 
 __global__ void gelu_kernel(float* x, int n) {
@@ -201,16 +201,6 @@ __global__ void causal_mask_kernel(float* attn, int n_head, int seq_len) {
     if (rem % seq_len > rem / seq_len) attn[idx] = -1e9f;
 }
 
-__global__ void add_bias_kernel(float* x, const float* bias, int rows, int cols) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < rows * cols) x[idx] += bias[idx % cols];
-}
-
-__global__ void add_vecs_kernel(float* a, const float* b, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) a[idx] += b[idx];
-}
-
 __global__ void embed_kernel(float* dst, const float* wte, const float* wpe,
                              const int* tokens, int seq_len, int embd) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -239,8 +229,9 @@ __global__ void concat_heads_kernel(float* dst, const float* src,
 }
 
 // Dispatch wrappers — launch on inference_stream
-void layer_norm(float* x, int seq_len, int dim, const float* w, const float* b) {
-    layer_norm_kernel<<<seq_len, BLOCK, 0, inference_stream>>>(x, seq_len, dim, w, b, 1e-5f);
+// Out-of-place LayerNorm: dst = LN(src)
+void layer_norm(const float* src, float* dst, int seq_len, int dim, const float* w, const float* b) {
+    layer_norm_kernel<<<seq_len, BLOCK, 0, inference_stream>>>(src, dst, seq_len, dim, w, b, 1e-5f);
 }
 void gelu_inplace(float* x, int n) {
     gelu_kernel<<<grid(n), BLOCK, 0, inference_stream>>>(x, n);
@@ -252,24 +243,23 @@ void softmax_rows_inplace(float* data, int rows, int cols) {
 void apply_causal_mask(float* attn, int n_head, int seq_len) {
     causal_mask_kernel<<<grid(n_head*seq_len*seq_len), BLOCK, 0, inference_stream>>>(attn, n_head, seq_len);
 }
-void add_bias(float* x, const float* bias, int rows, int cols) {
-    add_bias_kernel<<<grid(rows*cols), BLOCK, 0, inference_stream>>>(x, bias, rows, cols);
-}
 
 #else  // CPU path
 
-void layer_norm(float* x, int seq_len, int dim, const float* weight, const float* bias) {
+// Out-of-place LayerNorm: dst = LN(src)
+void layer_norm(const float* src, float* dst, int seq_len, int dim, const float* weight, const float* bias) {
     for (int s = 0; s < seq_len; ++s) {
-        float* row = x + s * dim;
+        const float* in  = src + s * dim;
+        float*       out = dst + s * dim;
         float mean = 0.0f;
-        for (int i = 0; i < dim; ++i) mean += row[i];
+        for (int i = 0; i < dim; ++i) mean += in[i];
         mean /= dim;
         float var = 0.0f;
-        for (int i = 0; i < dim; ++i) { float d = row[i] - mean; var += d * d; }
+        for (int i = 0; i < dim; ++i) { float d = in[i] - mean; var += d * d; }
         var /= dim;
         float inv_std = 1.0f / std::sqrt(var + 1e-5f);
         for (int i = 0; i < dim; ++i)
-            row[i] = (row[i] - mean) * inv_std * weight[i] + bias[i];
+            out[i] = (in[i] - mean) * inv_std * weight[i] + bias[i];
     }
 }
 
@@ -299,12 +289,28 @@ void apply_causal_mask(float* attn, int n_head, int seq_len) {
                 attn[h * seq_len * seq_len + i * seq_len + j] = -1e9f;
 }
 
-void add_bias(float* x, const float* bias, int rows, int cols) {
-    for (int i = 0; i < rows; ++i)
-        for (int j = 0; j < cols; ++j)
-            x[i * cols + j] += bias[j];
-}
 #endif  // DALOTIA_E_WITH_CUBLAS
+
+// ── Shared BLAS ops (dispatch to cblas or cuBLAS via multi::blas) ───────
+
+using vec_ref       = multi::array_ref<float, 1, fptr>;
+using const_vec_ref = multi::array_ref<float const, 1, const_fptr>;
+
+// Residual add: dst += src  (via multi::blas::axpy → cblas/cuBLAS)
+void add_vecs(float* dst, const float* src, int n) {
+    auto s = const_vec_ref(make_cfptr(src), {n});
+    auto d = vec_ref(make_fptr(dst), {n});
+    multi::blas::axpy(1.0f, s, d);
+}
+
+// Bias add: for each row, y[row,:] += bias[:]  (via multi::blas::axpy)
+void add_bias(float* x, const float* bias, int rows, int cols) {
+    auto b = const_vec_ref(make_cfptr(bias), {cols});
+    for (int r = 0; r < rows; ++r) {
+        auto row = vec_ref(make_fptr(x + r * cols), {cols});
+        multi::blas::axpy(1.0f, b, row);
+    }
+}
 
 // ── Model weights ───────────────────────────────────────────────────────
 
@@ -424,14 +430,8 @@ std::vector<float> forward(const GPT2Model& model,
     for (int layer = 0; layer < N_LAYER; ++layer) {
         const auto& blk = model.blocks[layer];
 
-        // Pre-attention LayerNorm
-#ifdef DALOTIA_E_WITH_CUBLAS
-        CHECK_CUDA(cudaMemcpyAsync(ln_out.data(), x.data(), S*N_EMBD*sizeof(float),
-                                   cudaMemcpyDeviceToDevice, inference_stream));
-#else
-        std::memcpy(ln_out.data(), x.data(), S * N_EMBD * sizeof(float));
-#endif
-        layer_norm(ln_out.data(), S, N_EMBD, blk.ln_1_weight.data(), blk.ln_1_bias.data());
+        // Pre-attention LayerNorm (out-of-place: x → ln_out)
+        layer_norm(x.data(), ln_out.data(), S, N_EMBD, blk.ln_1_weight.data(), blk.ln_1_bias.data());
 
         // QKV projection (cuBLAS/cblas)
 
@@ -503,21 +503,10 @@ std::vector<float> forward(const GPT2Model& model,
             multi::blas::gemm(1.0f, A, B, 0.0f, C);
         }
         add_bias(proj_out.data(), blk.c_proj_bias.data(), S, N_EMBD);
-#ifdef DALOTIA_E_WITH_CUBLAS
-        add_vecs_kernel<<<grid(S*N_EMBD), BLOCK, 0, inference_stream>>>(
-            x.data(), proj_out.data(), S*N_EMBD);
-#else
-        for (int i = 0; i < S*N_EMBD; ++i) x.data()[i] += proj_out.data()[i];
-#endif
+        add_vecs(x.data(), proj_out.data(), S * N_EMBD);
 
-        // Pre-FFN LayerNorm
-#ifdef DALOTIA_E_WITH_CUBLAS
-        CHECK_CUDA(cudaMemcpyAsync(ln_out.data(), x.data(), S*N_EMBD*sizeof(float),
-                                   cudaMemcpyDeviceToDevice, inference_stream));
-#else
-        std::memcpy(ln_out.data(), x.data(), S * N_EMBD * sizeof(float));
-#endif
-        layer_norm(ln_out.data(), S, N_EMBD, blk.ln_2_weight.data(), blk.ln_2_bias.data());
+        // Pre-FFN LayerNorm (out-of-place: x → ln_out)
+        layer_norm(x.data(), ln_out.data(), S, N_EMBD, blk.ln_2_weight.data(), blk.ln_2_bias.data());
 
         // FFN up + GELU
 
@@ -539,23 +528,17 @@ std::vector<float> forward(const GPT2Model& model,
             multi::blas::gemm(1.0f, A, B, 0.0f, C);
         }
         add_bias(ffn_out.data(), blk.c_proj_mlp_bias.data(), S, N_EMBD);
-#ifdef DALOTIA_E_WITH_CUBLAS
-        add_vecs_kernel<<<grid(S*N_EMBD), BLOCK, 0, inference_stream>>>(
-            x.data(), ffn_out.data(), S*N_EMBD);
-#else
-        for (int i = 0; i < S*N_EMBD; ++i) x.data()[i] += ffn_out.data()[i];
-#endif
+        add_vecs(x.data(), ffn_out.data(), S * N_EMBD);
 
     }
 
-    // Final LayerNorm
-    layer_norm(x.data(), S, N_EMBD, model.ln_f_weight.data(), model.ln_f_bias.data());
+    // Final LayerNorm (out-of-place: x → ln_out)
+    layer_norm(x.data(), ln_out.data(), S, N_EMBD, model.ln_f_weight.data(), model.ln_f_bias.data());
 
-    // Logits: x @ wte^T
-
+    // Logits: ln_out @ wte^T
     auto logits_buf = make_buffer(S * VOCAB_SIZE, smr);
     {
-        auto A = const_mat_ref(make_cfptr(x.data()), {S, N_EMBD});
+        auto A = const_mat_ref(make_cfptr(ln_out.data()), {S, N_EMBD});
         auto B = const_mat_ref(make_cfptr(model.wte.data()), {VOCAB_SIZE, N_EMBD});
         auto C = mat_ref(make_fptr(logits_buf.data()), {S, VOCAB_SIZE});
         multi::blas::gemm(1.0f, A, B.transposed(), 0.0f, C);
@@ -594,8 +577,7 @@ int main(int argc, char* argv[]) {
 
     inference_stream = 0;
 
-    // All GPU ops (kernels + cuBLAS) run on the default stream (stream 0),
-    // so they are implicitly ordered. Disable cuBLAS per-call sync.
+    // All GPU ops on default stream 0 — implicitly ordered.
     auto& ctx = multi::cuda::cublas::context::get_instance();
     ctx.set_sync(false);
 
