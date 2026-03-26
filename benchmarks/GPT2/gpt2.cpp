@@ -342,22 +342,19 @@ void add_bias(float* x, const float* bias, int rows, int cols) {
 // ── Model weights ───────────────────────────────────────────────────────
 // On GPU: device memory. On CPU: standard heap memory.
 
-// Reuse ScratchBuf for weight storage — same RAII, different resource.
-using WeightBuf = ScratchBuf;
-
 struct TransformerBlock {
-    WeightBuf ln_1_weight, ln_1_bias;
-    WeightBuf c_attn_weight, c_attn_bias;
-    WeightBuf c_proj_weight, c_proj_bias;
-    WeightBuf ln_2_weight, ln_2_bias;
-    WeightBuf c_fc_weight, c_fc_bias;
-    WeightBuf c_proj_mlp_weight, c_proj_mlp_bias;
+    ScratchBuf ln_1_weight, ln_1_bias;
+    ScratchBuf c_attn_weight, c_attn_bias;
+    ScratchBuf c_proj_weight, c_proj_bias;
+    ScratchBuf ln_2_weight, ln_2_bias;
+    ScratchBuf c_fc_weight, c_fc_bias;
+    ScratchBuf c_proj_mlp_weight, c_proj_mlp_bias;
 };
 
 struct GPT2Model {
-    WeightBuf wte, wpe;
+    ScratchBuf wte, wpe;
     std::vector<TransformerBlock> blocks;
-    WeightBuf ln_f_weight, ln_f_bias;
+    ScratchBuf ln_f_weight, ln_f_bias;
 };
 
 GPT2Model load_model(const std::string& filename) {
@@ -375,21 +372,22 @@ GPT2Model load_model(const std::string& filename) {
     };
 #endif
 
-    auto load = [&](const std::string& name) -> WeightBuf {
+    auto load = [&](const std::string& name) -> ScratchBuf {
         auto extents = file->get_tensor_extents(name);
         size_t n = std::accumulate(extents.begin(), extents.end(), size_t{1}, std::multiplies<>());
-        WeightBuf dev(n, dev_mr);
+        ScratchBuf buf(n, buf_mr);
         file->load_tensor_dense(name, dalotia_float_32, dalotia_C_ordering,
-                                reinterpret_cast<dalotia_byte*>(dev.data()));
-        return dev;
+                                reinterpret_cast<dalotia_byte*>(buf.data()));
+        return buf;
     };
-    auto load_transposed = [&](const std::string& name) -> WeightBuf {
+
+    auto load_transposed = [&](const std::string& name) -> ScratchBuf {
         auto extents = file->get_tensor_extents(name);
         size_t n = std::accumulate(extents.begin(), extents.end(), size_t{1}, std::multiplies<>());
-        WeightBuf dev(n, dev_mr);
+        ScratchBuf buf(n, buf_mr);
         file->load_tensor_dense(name, dalotia_float_32, dalotia_C_ordering,
-                                reinterpret_cast<dalotia_byte*>(dev.data()), {1,0});
-        return dev;
+                                reinterpret_cast<dalotia_byte*>(buf.data()), {1, 0});
+        return buf;
     };
 
     model.wte = load("wte.weight");
