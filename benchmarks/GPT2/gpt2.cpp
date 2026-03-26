@@ -383,6 +383,14 @@ GPT2Model load_model(const std::string& filename) {
                                 reinterpret_cast<dalotia_byte*>(dev.data()));
         return dev;
     };
+    auto load_transposed = [&](const std::string& name) -> WeightBuf {
+        auto extents = file->get_tensor_extents(name);
+        size_t n = std::accumulate(extents.begin(), extents.end(), size_t{1}, std::multiplies<>());
+        WeightBuf dev(n, dev_mr);
+        file->load_tensor_dense(name, dalotia_float_32, dalotia_C_ordering,
+                                reinterpret_cast<dalotia_byte*>(dev.data()), {1,0});
+        return dev;
+    };
 
     model.wte = load("wte.weight");
     model.wpe = load("wpe.weight");
@@ -392,7 +400,7 @@ GPT2Model load_model(const std::string& filename) {
         std::string p = "h." + std::to_string(i) + ".";
         auto& b = model.blocks[i];
         b.ln_1_weight = load(p+"ln_1.weight"); b.ln_1_bias = load(p+"ln_1.bias");
-        b.c_attn_weight = load(p+"attn.c_attn.weight"); b.c_attn_bias = load(p+"attn.c_attn.bias");
+        b.c_attn_weight = load_transposed(p+"attn.c_attn.weight"); b.c_attn_bias = load(p+"attn.c_attn.bias");
         b.c_proj_weight = load(p+"attn.c_proj.weight"); b.c_proj_bias = load(p+"attn.c_proj.bias");
         b.ln_2_weight = load(p+"ln_2.weight"); b.ln_2_bias = load(p+"ln_2.bias");
         b.c_fc_weight = load(p+"mlp.c_fc.weight"); b.c_fc_bias = load(p+"mlp.c_fc.bias");
@@ -461,7 +469,7 @@ std::vector<float> forward(const GPT2Model& model,
         const auto& blk = model.blocks[layer];
 
         // Weight views (const, reused each layer)
-        const auto& W_attn = const_mat_ref(make_cfptr(blk.c_attn_weight.data()), {N_EMBD, 3*N_EMBD});
+        const auto& W_attn = const_mat_ref(make_cfptr(blk.c_attn_weight.data()), {3*N_EMBD, N_EMBD});
         const auto& W_proj = const_mat_ref(make_cfptr(blk.c_proj_weight.data()), {N_EMBD, N_EMBD});
         const auto& W_fc   = const_mat_ref(make_cfptr(blk.c_fc_weight.data()),   {N_EMBD, FFN_DIM});
         const auto& W_fc_p = const_mat_ref(make_cfptr(blk.c_proj_mlp_weight.data()), {FFN_DIM, N_EMBD});
@@ -471,7 +479,7 @@ std::vector<float> forward(const GPT2Model& model,
                    blk.ln_1_weight.data(), blk.ln_1_bias.data());
 
         // QKV = LN @ W_attn + bias
-        QKV = LN * W_attn;
+        QKV = LN * W_attn.transposed();
         add_bias(qkv.data(), blk.c_attn_bias.data(), S, 3*N_EMBD);
 
         // Split Q,K,V and transpose to [N_HEAD, S, HEAD_DIM]
