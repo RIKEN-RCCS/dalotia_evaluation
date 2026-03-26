@@ -66,28 +66,52 @@ using mat_ref       = multi::array_ref<float, 2, fptr>;
 using const_mat_ref = multi::array_ref<float const, 2, const_fptr>;
 
 // ── Memory resources ────────────────────────────────────────────────────
+// GPU: no managed memory. Weights loaded directly to device.
+//      Scratch buffers use stream-ordered async allocation (cudaMallocAsync).
+// CPU: standard new/delete for everything.
 #ifdef DALOTIA_E_WITH_CUBLAS
 static cudaStream_t inference_stream = 0;
 
-std::pmr::memory_resource* weight_resource() {
-    return dalotia::cuda_managed_resource();
+// Weights: dalotia loads directly into device pointers (GDS or host-staging).
+std::pmr::memory_resource* device_resource() {
+    return dalotia::cuda_device_resource();
 }
 
-// Scratch buffers use managed memory (host-accessible for pmr::vector::resize
-// zero-initialization). cuda_async_memory_resource would be more efficient but
-// its pointers are not host-accessible, which pmr::vector::resize() requires.
+// Scratch: stream-ordered async allocation (cudaMallocAsync on stream 0).
+static dalotia::cuda_async_memory_resource* scratch_res = nullptr;
+
 std::pmr::memory_resource* scratch_resource() {
-    return dalotia::cuda_managed_resource();
+    if (!scratch_res) scratch_res = new dalotia::cuda_async_memory_resource(/*stream=*/0);
+    return scratch_res;
 }
 #else
-std::pmr::memory_resource* weight_resource() { return std::pmr::new_delete_resource(); }
 std::pmr::memory_resource* scratch_resource() { return std::pmr::new_delete_resource(); }
 #endif
 
-dalotia::vector<float> make_buffer(size_t n, std::pmr::memory_resource* mr) {
-    dalotia::vector<float> v(mr);
-    v.resize(n);
-    return v;
+// Scratch buffer: raw PMR allocation, no zero-initialization.
+// On GPU this uses cudaMallocAsync; on CPU it uses new[].
+struct ScratchBuf {
+    float* ptr = nullptr;
+    size_t count = 0;
+    std::pmr::memory_resource* mr = nullptr;
+
+    ScratchBuf() = default;
+    ScratchBuf(size_t n, std::pmr::memory_resource* r) : count(n), mr(r) {
+        ptr = static_cast<float*>(mr->allocate(n * sizeof(float), alignof(float)));
+    }
+    ~ScratchBuf() { if (ptr) mr->deallocate(ptr, count * sizeof(float), alignof(float)); }
+    ScratchBuf(ScratchBuf&& o) noexcept : ptr(o.ptr), count(o.count), mr(o.mr) { o.ptr = nullptr; }
+    ScratchBuf& operator=(ScratchBuf&& o) noexcept {
+        if (this != &o) { this->~ScratchBuf(); ptr = o.ptr; count = o.count; mr = o.mr; o.ptr = nullptr; }
+        return *this;
+    }
+    ScratchBuf(const ScratchBuf&) = delete;
+    ScratchBuf& operator=(const ScratchBuf&) = delete;
+    float* data() const { return ptr; }
+};
+
+ScratchBuf make_buffer(size_t n, std::pmr::memory_resource* mr) {
+    return ScratchBuf(n, mr);
 }
 
 // ── GPT-2 124M hyperparameters ──────────────────────────────────────────
@@ -316,76 +340,82 @@ void add_bias(float* x, const float* bias, int rows, int cols) {
 }
 
 // ── Model weights ───────────────────────────────────────────────────────
+// On GPU: device memory. On CPU: standard heap memory.
+
+// Reuse ScratchBuf for weight storage — same RAII, different resource.
+using WeightBuf = ScratchBuf;
 
 struct TransformerBlock {
-    dalotia::vector<float> ln_1_weight, ln_1_bias;
-    dalotia::vector<float> c_attn_weight, c_attn_bias;
-    dalotia::vector<float> c_proj_weight, c_proj_bias;
-    dalotia::vector<float> ln_2_weight, ln_2_bias;
-    dalotia::vector<float> c_fc_weight, c_fc_bias;
-    dalotia::vector<float> c_proj_mlp_weight, c_proj_mlp_bias;
-
-    explicit TransformerBlock(std::pmr::memory_resource* mr = std::pmr::new_delete_resource())
-        : ln_1_weight(mr), ln_1_bias(mr),
-          c_attn_weight(mr), c_attn_bias(mr),
-          c_proj_weight(mr), c_proj_bias(mr),
-          ln_2_weight(mr), ln_2_bias(mr),
-          c_fc_weight(mr), c_fc_bias(mr),
-          c_proj_mlp_weight(mr), c_proj_mlp_bias(mr) {}
+    WeightBuf ln_1_weight, ln_1_bias;
+    WeightBuf c_attn_weight, c_attn_bias;
+    WeightBuf c_proj_weight, c_proj_bias;
+    WeightBuf ln_2_weight, ln_2_bias;
+    WeightBuf c_fc_weight, c_fc_bias;
+    WeightBuf c_proj_mlp_weight, c_proj_mlp_bias;
 };
 
 struct GPT2Model {
-    dalotia::vector<float> wte, wpe;
+    WeightBuf wte, wpe;
     std::vector<TransformerBlock> blocks;
-    dalotia::vector<float> ln_f_weight, ln_f_bias;
-
-    explicit GPT2Model(std::pmr::memory_resource* mr = std::pmr::new_delete_resource())
-        : wte(mr), wpe(mr), ln_f_weight(mr), ln_f_bias(mr) {}
+    WeightBuf ln_f_weight, ln_f_bias;
 };
 
 GPT2Model load_model(const std::string& filename) {
     auto file = std::unique_ptr<dalotia::TensorFile>(
         dalotia::make_tensor_file(filename));
-
-    auto* mr = weight_resource();
-    GPT2Model model(mr);
-
-    std::pmr::polymorphic_allocator<dalotia_byte> alloc(mr);
-
-    auto load_into = [&](dalotia::vector<float>& dst, const std::string& name) {
-        auto [ext, data] = file->load_tensor_dense<float>(
-            name, dalotia_float_32, dalotia_C_ordering, {}, alloc);
-        dst = std::move(data);
-    };
-
-    load_into(model.wte, "wte.weight");
-    load_into(model.wpe, "wpe.weight");
-
-    model.blocks.reserve(N_LAYER);
-    for (int i = 0; i < N_LAYER; ++i) {
-        model.blocks.emplace_back(mr);
-        std::string p = "h." + std::to_string(i) + ".";
-        auto& b = model.blocks.back();
-        load_into(b.ln_1_weight, p+"ln_1.weight"); load_into(b.ln_1_bias, p+"ln_1.bias");
-        load_into(b.c_attn_weight, p+"attn.c_attn.weight"); load_into(b.c_attn_bias, p+"attn.c_attn.bias");
-        load_into(b.c_proj_weight, p+"attn.c_proj.weight"); load_into(b.c_proj_bias, p+"attn.c_proj.bias");
-        load_into(b.ln_2_weight, p+"ln_2.weight"); load_into(b.ln_2_bias, p+"ln_2.bias");
-        load_into(b.c_fc_weight, p+"mlp.c_fc.weight"); load_into(b.c_fc_bias, p+"mlp.c_fc.bias");
-        load_into(b.c_proj_mlp_weight, p+"mlp.c_proj.weight"); load_into(b.c_proj_mlp_bias, p+"mlp.c_proj.bias");
-    }
-    load_into(model.ln_f_weight, "ln_f.weight");
-    load_into(model.ln_f_bias,   "ln_f.bias");
+    GPT2Model model;
 
 #ifdef DALOTIA_E_WITH_CUBLAS
-    CHECK_CUDA(cudaDeviceSynchronize());
+    // Allocate device buffer, load directly into it via dalotia.
+    // dalotia detects the device pointer and uses GDS or host-staging internally.
+    auto* dev_mr = device_resource();
+
+    auto load = [&](const std::string& name) -> WeightBuf {
+        auto extents = file->get_tensor_extents(name);
+        size_t n = std::accumulate(extents.begin(), extents.end(), size_t{1}, std::multiplies<>());
+        WeightBuf dev(n, dev_mr);
+        file->load_tensor_dense(name, dalotia_float_32, dalotia_C_ordering,
+                                reinterpret_cast<dalotia_byte*>(dev.data()));
+        return dev;
+    };
+#else
+    auto* cpu_mr = std::pmr::new_delete_resource();
+    std::pmr::polymorphic_allocator<dalotia_byte> cpu_alloc(cpu_mr);
+
+    auto load = [&](const std::string& name) -> WeightBuf {
+        auto [ext, data] = file->load_tensor_dense<float>(
+            name, dalotia_float_32, dalotia_C_ordering, {}, cpu_alloc);
+        // Wrap the pmr::vector data in a WeightBuf — need to copy since
+        // pmr::vector will free on scope exit.
+        WeightBuf buf(data.size(), cpu_mr);
+        std::memcpy(buf.data(), data.data(), data.size() * sizeof(float));
+        return buf;
+    };
 #endif
+
+    model.wte = load("wte.weight");
+    model.wpe = load("wpe.weight");
+
+    model.blocks.resize(N_LAYER);
+    for (int i = 0; i < N_LAYER; ++i) {
+        std::string p = "h." + std::to_string(i) + ".";
+        auto& b = model.blocks[i];
+        b.ln_1_weight = load(p+"ln_1.weight"); b.ln_1_bias = load(p+"ln_1.bias");
+        b.c_attn_weight = load(p+"attn.c_attn.weight"); b.c_attn_bias = load(p+"attn.c_attn.bias");
+        b.c_proj_weight = load(p+"attn.c_proj.weight"); b.c_proj_bias = load(p+"attn.c_proj.bias");
+        b.ln_2_weight = load(p+"ln_2.weight"); b.ln_2_bias = load(p+"ln_2.bias");
+        b.c_fc_weight = load(p+"mlp.c_fc.weight"); b.c_fc_bias = load(p+"mlp.c_fc.bias");
+        b.c_proj_mlp_weight = load(p+"mlp.c_proj.weight"); b.c_proj_mlp_bias = load(p+"mlp.c_proj.bias");
+    }
+    model.ln_f_weight = load("ln_f.weight");
+    model.ln_f_bias   = load("ln_f.bias");
     return model;
 }
 
 // ── Forward pass ────────────────────────────────────────────────────────
 // GPU: all ops on default stream 0 — implicitly ordered, no inter-op sync.
-//      Single cudaDeviceSynchronize at entry (managed memory coherence)
-//      and cudaStreamSynchronize at exit (before host reads logits).
+//      All buffers are device memory (no managed). Only sync is the final
+//      cudaStreamSynchronize before reading logits back to host.
 // CPU: sequential host ops.
 
 std::vector<float> forward(const GPT2Model& model,
@@ -602,7 +632,7 @@ int main(int argc, char* argv[]) {
     }
 
 #ifdef DALOTIA_E_WITH_CUBLAS
-    // inference_stream == 0 (default stream), no destroy needed
+    delete scratch_res; scratch_res = nullptr;
 #endif
 
     std::cout << "success!" << std::endl;
