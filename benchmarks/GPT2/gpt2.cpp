@@ -365,11 +365,9 @@ GPT2Model load_model(const std::string& filename) {
 #ifdef DALOTIA_E_WITH_CUBLAS
     // Allocate device buffer, load directly into it via dalotia.
     // dalotia detects the device pointer and uses GDS or host-staging internally.
-    auto* dev_mr = device_resource();
+    auto* buf_mr = device_resource();
 #else
-    auto* cpu_mr = std::pmr::new_delete_resource();
-    std::pmr::polymorphic_allocator<dalotia_byte> cpu_alloc(cpu_mr);
-    };
+    auto* buf_mr = std::pmr::new_delete_resource();
 #endif
 
     auto load = [&](const std::string& name) -> ScratchBuf {
