@@ -440,9 +440,6 @@ std::vector<float> forward(const GPT2Model& model,
 
     // ── Embeddings ──────────────────────────────────────────────────
 #ifdef DALOTIA_E_WITH_CUBLAS
-    // Sync managed memory before GPU access
-    CHECK_CUDA(cudaDeviceSynchronize());
-
     // Upload token IDs to device and run embed kernel
     int* d_tok;
     CHECK_CUDA(cudaMallocAsync(&d_tok, S * sizeof(int), inference_stream));
