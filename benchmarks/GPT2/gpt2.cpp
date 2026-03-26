@@ -369,6 +369,11 @@ GPT2Model load_model(const std::string& filename) {
     // Allocate device buffer, load directly into it via dalotia.
     // dalotia detects the device pointer and uses GDS or host-staging internally.
     auto* dev_mr = device_resource();
+#else
+    auto* cpu_mr = std::pmr::new_delete_resource();
+    std::pmr::polymorphic_allocator<dalotia_byte> cpu_alloc(cpu_mr);
+    };
+#endif
 
     auto load = [&](const std::string& name) -> WeightBuf {
         auto extents = file->get_tensor_extents(name);
@@ -378,20 +383,6 @@ GPT2Model load_model(const std::string& filename) {
                                 reinterpret_cast<dalotia_byte*>(dev.data()));
         return dev;
     };
-#else
-    auto* cpu_mr = std::pmr::new_delete_resource();
-    std::pmr::polymorphic_allocator<dalotia_byte> cpu_alloc(cpu_mr);
-
-    auto load = [&](const std::string& name) -> WeightBuf {
-        auto [ext, data] = file->load_tensor_dense<float>(
-            name, dalotia_float_32, dalotia_C_ordering, {}, cpu_alloc);
-        // Wrap the pmr::vector data in a WeightBuf — need to copy since
-        // pmr::vector will free on scope exit.
-        WeightBuf buf(data.size(), cpu_mr);
-        std::memcpy(buf.data(), data.data(), data.size() * sizeof(float));
-        return buf;
-    };
-#endif
 
     model.wte = load("wte.weight");
     model.wpe = load("wpe.weight");
