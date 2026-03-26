@@ -457,30 +457,30 @@ std::vector<float> forward(const GPT2Model& model,
     }
 #endif
 
-    // 2D views over flat buffers — these are the "matrices" for Boost.Multi
-    auto X       = mat_ref(make_fptr(x.data()),           {S, N_EMBD});
-    auto LN      = mat_ref(make_fptr(ln_out.data()),      {S, N_EMBD});
-    auto QKV     = mat_ref(make_fptr(qkv.data()),         {S, 3*N_EMBD});
-    auto Proj     = mat_ref(make_fptr(proj_out.data()),    {S, N_EMBD});
-    auto FFN_H   = mat_ref(make_fptr(ffn_hidden.data()),  {S, FFN_DIM});
-    auto FFN_O   = mat_ref(make_fptr(ffn_out.data()),     {S, N_EMBD});
-    auto Concat  = mat_ref(make_fptr(attn_concat.data()), {S, N_EMBD});
+    // 2D views over flat buffers
+    auto&& X       = mat_ref(make_fptr(x.data()),           {S, N_EMBD});
+    auto&& LN      = mat_ref(make_fptr(ln_out.data()),      {S, N_EMBD});
+    auto&& QKV     = mat_ref(make_fptr(qkv.data()),         {S, 3*N_EMBD});
+    auto&& Proj    = mat_ref(make_fptr(proj_out.data()),     {S, N_EMBD});
+    auto&& FFN_H   = mat_ref(make_fptr(ffn_hidden.data()),  {S, FFN_DIM});
+    auto&& FFN_O   = mat_ref(make_fptr(ffn_out.data()),     {S, N_EMBD});
+    auto&& Concat  = mat_ref(make_fptr(attn_concat.data()), {S, N_EMBD});
 
     for (int layer = 0; layer < N_LAYER; ++layer) {
         const auto& blk = model.blocks[layer];
 
         // Weight views (const, reused each layer)
-        auto W_attn = const_mat_ref(make_cfptr(blk.c_attn_weight.data()), {N_EMBD, 3*N_EMBD});
-        auto W_proj = const_mat_ref(make_cfptr(blk.c_proj_weight.data()), {N_EMBD, N_EMBD});
-        auto W_fc   = const_mat_ref(make_cfptr(blk.c_fc_weight.data()),   {N_EMBD, FFN_DIM});
-        auto W_fc_p = const_mat_ref(make_cfptr(blk.c_proj_mlp_weight.data()), {FFN_DIM, N_EMBD});
+        const auto& W_attn = const_mat_ref(make_cfptr(blk.c_attn_weight.data()), {N_EMBD, 3*N_EMBD});
+        const auto& W_proj = const_mat_ref(make_cfptr(blk.c_proj_weight.data()), {N_EMBD, N_EMBD});
+        const auto& W_fc   = const_mat_ref(make_cfptr(blk.c_fc_weight.data()),   {N_EMBD, FFN_DIM});
+        const auto& W_fc_p = const_mat_ref(make_cfptr(blk.c_proj_mlp_weight.data()), {FFN_DIM, N_EMBD});
 
         // Pre-attention LayerNorm: LN = LayerNorm(X)
         layer_norm(x.data(), ln_out.data(), S, N_EMBD,
                    blk.ln_1_weight.data(), blk.ln_1_bias.data());
 
         // QKV = LN @ W_attn + bias
-        multi::blas::gemm(1.0f, LN, W_attn, 0.0f, QKV);
+        QKV = LN * W_attn;
         add_bias(qkv.data(), blk.c_attn_bias.data(), S, 3*N_EMBD);
 
         // Split Q,K,V and transpose to [N_HEAD, S, HEAD_DIM]
@@ -502,16 +502,16 @@ std::vector<float> forward(const GPT2Model& model,
         // Per-head attention: scores = scale * Qh @ Kh^T, output = scores @ Vh
         float scale = 1.0f / std::sqrt(static_cast<float>(HEAD_DIM));
         for (int h = 0; h < N_HEAD; ++h) {
-            auto Qh = const_mat_ref(make_cfptr(Q.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
-            auto Kh = const_mat_ref(make_cfptr(K.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
-            auto Vh = const_mat_ref(make_cfptr(V.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
-            auto Sh = mat_ref(make_fptr(attn_scores.data()+h*S*S), {S, S});
-            auto Oh = mat_ref(make_fptr(attn_out.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
+            const auto& Qh = const_mat_ref(make_cfptr(Q.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
+            const auto& Kh = const_mat_ref(make_cfptr(K.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
+            const auto& Vh = const_mat_ref(make_cfptr(V.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
+            auto&& Sh = mat_ref(make_fptr(attn_scores.data()+h*S*S), {S, S});
+            auto&& Oh = mat_ref(make_fptr(attn_out.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
 
             multi::blas::gemm(scale, Qh, Kh.transposed(), 0.0f, Sh);
             apply_causal_mask(attn_scores.data()+h*S*S, 1, S);
             softmax_rows_inplace(attn_scores.data()+h*S*S, S, S);
-            multi::blas::gemm(1.0f, Sh, Vh, 0.0f, Oh);
+            Oh = Sh * Vh;
         }
 
         // Concat heads: [N_HEAD, S, HEAD_DIM] → [S, N_EMBD]
@@ -527,7 +527,7 @@ std::vector<float> forward(const GPT2Model& model,
 #endif
 
         // Output projection into Proj, add bias, then X += Proj
-        multi::blas::gemm(1.0f, Concat, W_proj, 0.0f, Proj);
+        Proj = Concat * W_proj;
         add_bias(proj_out.data(), blk.c_proj_bias.data(), S, N_EMBD);
         add_vecs(x.data(), proj_out.data(), S * N_EMBD);
 
@@ -536,10 +536,10 @@ std::vector<float> forward(const GPT2Model& model,
                    blk.ln_2_weight.data(), blk.ln_2_bias.data());
 
         // FFN: X += GELU(LN @ W_fc + bias) @ W_fc_proj + bias
-        multi::blas::gemm(1.0f, LN, W_fc, 0.0f, FFN_H);
+        FFN_H = LN * W_fc;
         add_bias(ffn_hidden.data(), blk.c_fc_bias.data(), S, FFN_DIM);
         gelu_inplace(ffn_hidden.data(), S * FFN_DIM);
-        multi::blas::gemm(1.0f, FFN_H, W_fc_p, 0.0f, FFN_O);
+        FFN_O = FFN_H * W_fc_p;
         add_bias(ffn_out.data(), blk.c_proj_mlp_bias.data(), S, N_EMBD);
         add_vecs(x.data(), ffn_out.data(), S * N_EMBD);
     }
@@ -551,9 +551,9 @@ std::vector<float> forward(const GPT2Model& model,
     // Logits = LN @ Wte^T
     auto logits_buf = make_buffer(S * VOCAB_SIZE, smr);
     {
-        auto Wte = const_mat_ref(make_cfptr(model.wte.data()), {VOCAB_SIZE, N_EMBD});
-        auto Logits = mat_ref(make_fptr(logits_buf.data()), {S, VOCAB_SIZE});
-        multi::blas::gemm(1.0f, LN, Wte.transposed(), 0.0f, Logits);
+        auto   Wte    = const_mat_ref(make_cfptr(model.wte.data()), {VOCAB_SIZE, N_EMBD});
+        auto&& Logits = mat_ref(make_fptr(logits_buf.data()), {S, VOCAB_SIZE});
+        Logits = LN * Wte.transposed();
     }
 
     // Single sync point: copy logits to host
@@ -600,7 +600,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     auto t0 = std::chrono::high_resolution_clock::now();
-    GPT2Model model = load_model(model_path);
+    const GPT2Model model = load_model(model_path);
     auto t1 = std::chrono::high_resolution_clock::now();
     std::cout << "Model loaded in " << std::chrono::duration<double>(t1-t0).count() << "s" << std::endl;
 
