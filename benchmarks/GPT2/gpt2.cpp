@@ -36,9 +36,7 @@
 #endif
 
 namespace multi = boost::multi;
-// NOTE: multi::blas::operators::operator* and operator+= exist for gemm/axpy
-// but require matching element types (no const_mat_ref * const_mat_ref → mat_ref).
-// Using explicit multi::blas::gemm/axpy calls instead for const-correctness.
+using multi::blas::operators::operator*;  // C = A * B  (gemm)
 
 // ── Pointer-type abstraction ────────────────────────────────────────────
 #ifdef DALOTIA_E_WITH_CUBLAS
