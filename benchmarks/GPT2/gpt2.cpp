@@ -395,10 +395,10 @@ GPT2Model load_model(const std::string& filename) {
         auto& b = model.blocks[i];
         b.ln_1_weight = load(p+"ln_1.weight"); b.ln_1_bias = load(p+"ln_1.bias");
         b.c_attn_weight = load_transposed(p+"attn.c_attn.weight"); b.c_attn_bias = load(p+"attn.c_attn.bias");
-        b.c_proj_weight = load(p+"attn.c_proj.weight"); b.c_proj_bias = load(p+"attn.c_proj.bias");
+        b.c_proj_weight = load_transposed(p+"attn.c_proj.weight"); b.c_proj_bias = load(p+"attn.c_proj.bias");
         b.ln_2_weight = load(p+"ln_2.weight"); b.ln_2_bias = load(p+"ln_2.bias");
-        b.c_fc_weight = load(p+"mlp.c_fc.weight"); b.c_fc_bias = load(p+"mlp.c_fc.bias");
-        b.c_proj_mlp_weight = load(p+"mlp.c_proj.weight"); b.c_proj_mlp_bias = load(p+"mlp.c_proj.bias");
+        b.c_fc_weight = load_transposed(p+"mlp.c_fc.weight"); b.c_fc_bias = load(p+"mlp.c_fc.bias");
+        b.c_proj_mlp_weight = load_transposed(p+"mlp.c_proj.weight"); b.c_proj_mlp_bias = load(p+"mlp.c_proj.bias");
     }
     model.ln_f_weight = load("ln_f.weight");
     model.ln_f_bias   = load("ln_f.bias");
@@ -462,11 +462,12 @@ std::vector<float> forward(const GPT2Model& model,
     for (int layer = 0; layer < N_LAYER; ++layer) {
         const auto& blk = model.blocks[layer];
 
-        // Weight views (const, reused each layer)
+        // Weight views — data is pre-transposed in memory for better cache locality.
+        // Physical layout is [out, in]; .transposed() gives logical [in, out] for gemm.
         const auto& W_attn = const_mat_ref(make_cfptr(blk.c_attn_weight.data()), {3*N_EMBD, N_EMBD});
         const auto& W_proj = const_mat_ref(make_cfptr(blk.c_proj_weight.data()), {N_EMBD, N_EMBD});
-        const auto& W_fc   = const_mat_ref(make_cfptr(blk.c_fc_weight.data()),   {N_EMBD, FFN_DIM});
-        const auto& W_fc_p = const_mat_ref(make_cfptr(blk.c_proj_mlp_weight.data()), {FFN_DIM, N_EMBD});
+        const auto& W_fc   = const_mat_ref(make_cfptr(blk.c_fc_weight.data()),   {FFN_DIM, N_EMBD});
+        const auto& W_fc_p = const_mat_ref(make_cfptr(blk.c_proj_mlp_weight.data()), {N_EMBD, FFN_DIM});
 
         // Pre-attention LayerNorm: LN = LayerNorm(X)
         layer_norm(x.data(), ln_out.data(), S, N_EMBD,
@@ -520,7 +521,7 @@ std::vector<float> forward(const GPT2Model& model,
 #endif
 
         // Output projection into Proj, add bias, then X += Proj
-        Proj = Concat * W_proj;
+        Proj = Concat * W_proj.transposed();
         add_bias(proj_out.data(), blk.c_proj_bias.data(), S, N_EMBD);
         add_vecs(x.data(), proj_out.data(), S * N_EMBD);
 
@@ -529,10 +530,10 @@ std::vector<float> forward(const GPT2Model& model,
                    blk.ln_2_weight.data(), blk.ln_2_bias.data());
 
         // FFN: X += GELU(LN @ W_fc + bias) @ W_fc_proj + bias
-        FFN_H = LN * W_fc;
+        FFN_H = LN * W_fc.transposed();
         add_bias(ffn_hidden.data(), blk.c_fc_bias.data(), S, FFN_DIM);
         gelu_inplace(ffn_hidden.data(), S * FFN_DIM);
-        FFN_O = FFN_H * W_fc_p;
+        FFN_O = FFN_H * W_fc_p.transposed();
         add_bias(ffn_out.data(), blk.c_proj_mlp_bias.data(), S, N_EMBD);
         add_vecs(x.data(), ffn_out.data(), S * N_EMBD);
     }
