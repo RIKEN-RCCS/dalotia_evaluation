@@ -619,8 +619,12 @@ int main(int argc, char* argv[]) {
         auto logits = forward(model, prompt_tokens);
         for (int i = 0; i < int(prompt_tokens.size()) * VOCAB_SIZE; ++i)
             if (!std::isfinite(logits[i])) { std::cerr << "FAIL: non-finite logits!" << std::endl; return 1; }
-        std::cout << "First predicted token after prompt: "
-                  << argmax(logits.data() + (prompt_tokens.size()-1) * VOCAB_SIZE, VOCAB_SIZE) << std::endl;
+        int first_pred = argmax(logits.data() + (prompt_tokens.size()-1) * VOCAB_SIZE, VOCAB_SIZE);
+        std::cout << "First predicted token after prompt: " << first_pred << std::endl;
+        if (first_pred != 407) {
+            std::cerr << "FAIL: expected token 407, got " << first_pred << std::endl;
+            return 1;
+        }
     }
 
 #ifdef DALOTIA_E_WITH_CUBLAS
