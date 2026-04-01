@@ -36,7 +36,6 @@
 #endif
 
 namespace multi = boost::multi;
-using multi::blas::operators::operator*;  // C = A * B  (gemm)
 
 // ── Pointer-type abstraction ────────────────────────────────────────────
 #ifdef DALOTIA_E_WITH_CUBLAS
@@ -451,13 +450,13 @@ std::vector<float> forward(const GPT2Model& model,
 #endif
 
     // 2D views over flat buffers
-    auto&& X       = mat_ref(make_fptr(x.data()),           {S, N_EMBD});
-    auto&& LN      = mat_ref(make_fptr(ln_out.data()),      {S, N_EMBD});
-    auto&& QKV     = mat_ref(make_fptr(qkv.data()),         {S, 3*N_EMBD});
-    auto&& Proj    = mat_ref(make_fptr(proj_out.data()),     {S, N_EMBD});
-    auto&& FFN_H   = mat_ref(make_fptr(ffn_hidden.data()),  {S, FFN_DIM});
-    auto&& FFN_O   = mat_ref(make_fptr(ffn_out.data()),     {S, N_EMBD});
-    auto&& Concat  = mat_ref(make_fptr(attn_concat.data()), {S, N_EMBD});
+    auto X       = mat_ref(make_fptr(x.data()),           {S, N_EMBD});
+    auto LN      = mat_ref(make_fptr(ln_out.data()),      {S, N_EMBD});
+    auto QKV     = mat_ref(make_fptr(qkv.data()),         {S, 3*N_EMBD});
+    auto Proj    = mat_ref(make_fptr(proj_out.data()),     {S, N_EMBD});
+    auto FFN_H   = mat_ref(make_fptr(ffn_hidden.data()),  {S, FFN_DIM});
+    auto FFN_O   = mat_ref(make_fptr(ffn_out.data()),     {S, N_EMBD});
+    auto Concat  = mat_ref(make_fptr(attn_concat.data()), {S, N_EMBD});
 
     for (int layer = 0; layer < N_LAYER; ++layer) {
         const auto& blk = model.blocks[layer];
@@ -474,7 +473,7 @@ std::vector<float> forward(const GPT2Model& model,
                    blk.ln_1_weight.data(), blk.ln_1_bias.data());
 
         // QKV = LN @ W_attn + bias
-        QKV = LN * W_attn.transposed();
+        multi::blas::gemm(1.0f, LN, W_attn.transposed(), 0.0f, QKV);
         add_bias(qkv.data(), blk.c_attn_bias.data(), S, 3*N_EMBD);
 
         // Split Q,K,V and transpose to [N_HEAD, S, HEAD_DIM]
@@ -499,13 +498,13 @@ std::vector<float> forward(const GPT2Model& model,
             const auto& Qh = const_mat_ref(make_cfptr(Q.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
             const auto& Kh = const_mat_ref(make_cfptr(K.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
             const auto& Vh = const_mat_ref(make_cfptr(V.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
-            auto&& Sh = mat_ref(make_fptr(attn_scores.data()+h*S*S), {S, S});
-            auto&& Oh = mat_ref(make_fptr(attn_out.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
+            auto Sh = mat_ref(make_fptr(attn_scores.data()+h*S*S), {S, S});
+            auto Oh = mat_ref(make_fptr(attn_out.data()+h*S*HEAD_DIM), {S, HEAD_DIM});
 
             multi::blas::gemm(scale, Qh, Kh.transposed(), 0.0f, Sh);
             apply_causal_mask(attn_scores.data()+h*S*S, 1, S);
             softmax_rows_inplace(attn_scores.data()+h*S*S, S, S);
-            Oh = Sh * Vh;
+            multi::blas::gemm(1.0f, Sh, Vh, 0.0f, Oh);
         }
 
         // Concat heads: [N_HEAD, S, HEAD_DIM] → [S, N_EMBD]
@@ -521,7 +520,7 @@ std::vector<float> forward(const GPT2Model& model,
 #endif
 
         // Output projection into Proj, add bias, then X += Proj
-        Proj = Concat * W_proj.transposed();
+        multi::blas::gemm(1.0f, Concat, W_proj.transposed(), 0.0f, Proj);
         add_bias(proj_out.data(), blk.c_proj_bias.data(), S, N_EMBD);
         add_vecs(x.data(), proj_out.data(), S * N_EMBD);
 
@@ -530,10 +529,10 @@ std::vector<float> forward(const GPT2Model& model,
                    blk.ln_2_weight.data(), blk.ln_2_bias.data());
 
         // FFN: X += GELU(LN @ W_fc + bias) @ W_fc_proj + bias
-        FFN_H = LN * W_fc.transposed();
+        multi::blas::gemm(1.0f, LN, W_fc.transposed(), 0.0f, FFN_H);
         add_bias(ffn_hidden.data(), blk.c_fc_bias.data(), S, FFN_DIM);
         gelu_inplace(ffn_hidden.data(), S * FFN_DIM);
-        FFN_O = FFN_H * W_fc_p.transposed();
+        multi::blas::gemm(1.0f, FFN_H, W_fc_p.transposed(), 0.0f, FFN_O);
         add_bias(ffn_out.data(), blk.c_proj_mlp_bias.data(), S, N_EMBD);
         add_vecs(x.data(), ffn_out.data(), S * N_EMBD);
     }
@@ -546,8 +545,8 @@ std::vector<float> forward(const GPT2Model& model,
     auto logits_buf = make_buffer(S * VOCAB_SIZE, smr);
     {
         auto   Wte    = const_mat_ref(make_cfptr(model.wte.data()), {VOCAB_SIZE, N_EMBD});
-        auto&& Logits = mat_ref(make_fptr(logits_buf.data()), {S, VOCAB_SIZE});
-        Logits = LN * Wte.transposed();
+        auto Logits = mat_ref(make_fptr(logits_buf.data()), {S, VOCAB_SIZE});
+        multi::blas::gemm(1.0f, LN, Wte.transposed(), 0.0f, Logits);
     }
 
     // Single sync point: copy logits to host
