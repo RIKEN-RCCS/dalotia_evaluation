@@ -190,6 +190,10 @@ def generate(
     inp = torch.tensor([tokens], dtype=torch.long, device=device)
 
     def _run(x: torch.Tensor, caches, offset: int):
+        # Required when compiling with CUDA Graphs (mode="reduce-overhead"):
+        # signals that previous-step outputs (KV cache) won't be mutated.
+        if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+            torch.compiler.cudagraph_mark_step_begin()
         if autocast_dtype is not None and device.type == "cuda":
             with torch.autocast(device_type="cuda", dtype=autocast_dtype):
                 return model(x, caches, offset)
@@ -259,7 +263,10 @@ def main() -> int:
         return 0
 
     if args.compile:
-        model = torch.compile(model, mode="reduce-overhead", fullgraph=False)
+        # NB: mode="reduce-overhead" enables CUDA Graphs, which break KV-cache
+        # reuse (returned tensors get overwritten on the next replay). Default
+        # mode still gives Inductor kernel fusion without that hazard.
+        model = torch.compile(model, fullgraph=False)
 
     # Same prompt as gpt2.cpp: "The meaning of life is" → expects 407 next.
     prompt_tokens = [464, 3616, 286, 1204, 318]
